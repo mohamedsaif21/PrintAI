@@ -2,7 +2,7 @@
 import { Order, ScheduleResult } from "@/types";
 import { Badge } from "@/components/ui/Badge";
 import { format } from "date-fns";
-import { Bot, CheckCircle2, AlertTriangle, Cpu, Clock } from "lucide-react";
+import { Bot, CheckCircle2, AlertTriangle, Cpu, Clock, ShieldAlert, ShieldCheck, ShieldOff } from "lucide-react";
 import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, Cell } from "recharts";
 
 interface Props {
@@ -128,6 +128,53 @@ export function SchedulePage({ schedule, order }: Props) {
           </div>
         </div>
       </div>
+
+      {/* Risk Analysis */}
+      {schedule.risk && (
+        <div className={`rounded-xl border p-5 ${
+          schedule.risk.riskLevel === "HIGH"
+            ? "bg-red-50 dark:bg-red-950/30 border-red-200 dark:border-red-800"
+            : schedule.risk.riskLevel === "MEDIUM"
+            ? "bg-amber-50 dark:bg-amber-950/30 border-amber-200 dark:border-amber-800"
+            : "bg-emerald-50 dark:bg-emerald-950/30 border-emerald-200 dark:border-emerald-800"
+        }`}>
+          <div className="flex items-center justify-between mb-3">
+            <div className="flex items-center gap-2">
+              {schedule.risk.riskLevel === "HIGH" ? (
+                <ShieldAlert className="w-5 h-5 text-red-600" />
+              ) : schedule.risk.riskLevel === "MEDIUM" ? (
+                <ShieldOff className="w-5 h-5 text-amber-600" />
+              ) : (
+                <ShieldCheck className="w-5 h-5 text-emerald-600" />
+              )}
+              <p className={`text-sm font-semibold ${
+                schedule.risk.riskLevel === "HIGH" ? "text-red-700 dark:text-red-300"
+                : schedule.risk.riskLevel === "MEDIUM" ? "text-amber-700 dark:text-amber-300"
+                : "text-emerald-700 dark:text-emerald-300"
+              }`}>AI Risk Analysis</p>
+            </div>
+            <div className="flex items-center gap-2">
+              <span className="text-xs text-gray-500">Risk Score</span>
+              <span className={`text-lg font-bold ${
+                schedule.risk.riskLevel === "HIGH" ? "text-red-600"
+                : schedule.risk.riskLevel === "MEDIUM" ? "text-amber-600"
+                : "text-emerald-600"
+              }`}>{schedule.risk.riskScore}/100</span>
+            </div>
+          </div>
+          {schedule.risk.anomalies.length > 0 && (
+            <div className="mb-3 space-y-1">
+              {schedule.risk.anomalies.map((a, i) => (
+                <div key={i} className="flex items-start gap-1.5 text-xs text-gray-600 dark:text-gray-400">
+                  <AlertTriangle className="w-3.5 h-3.5 mt-0.5 flex-shrink-0 text-amber-500" />
+                  {a}
+                </div>
+              ))}
+            </div>
+          )}
+          <p className="text-sm text-gray-700 dark:text-gray-300">{schedule.risk.recommendation}</p>
+        </div>
+      )}
 
       {/* Gemini explanation */}
       <div className="bg-gradient-to-br from-blue-50 to-violet-50 dark:from-blue-950/30 dark:to-violet-950/30 rounded-xl border border-blue-200 dark:border-blue-800 p-5">

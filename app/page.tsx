@@ -18,6 +18,11 @@ export default function Home() {
   const [lastSchedule, setLastSchedule] = useState<ScheduleResult | null>(null);
   const [lastOrder, setLastOrder] = useState<Order | null>(null);
   const [notifications, setNotifications] = useState<Notif[]>([]);
+  const [scheduleMap, setScheduleMap] = useState<Record<string, "SAFE" | "RISK">>(() => {
+    // #9 — rehydrate scheduleMap from sessionStorage so refresh doesn't wipe SLA state
+    if (typeof window === "undefined") return {};
+    try { return JSON.parse(sessionStorage.getItem("scheduleMap") || "{}"); } catch { return {}; }
+  });
 
   const pushNotif = (msg: string, type: Notif["type"]) =>
     setNotifications((n) => [{ msg, type }, ...n].slice(0, 5));
@@ -39,6 +44,11 @@ export default function Home() {
     setOrders((prev) => [order, ...prev]);
     setLastSchedule(schedule);
     setLastOrder(order);
+    setScheduleMap((prev) => {
+      const updated = { ...prev, [order.id]: schedule.slaStatus };
+      sessionStorage.setItem("scheduleMap", JSON.stringify(updated));
+      return updated;
+    });
     // Update machine utilisations based on schedule tasks
     setMachines((prev) =>
       prev.map((m) => {
@@ -77,11 +87,19 @@ export default function Home() {
     if (lastSchedule) {
       setLastSchedule({ ...data.result });
     }
-    // Update affected order status to "At Risk" if SLA risk
-    if (data.result.slaStatus === "RISK" && lastOrder) {
-      setOrders((prev) =>
-        prev.map((o) => (o.id === lastOrder.id ? { ...o, status: "At Risk" } : o))
-      );
+    // #10 — use orderId from the result, not lastOrder, so any order's SLA is updated correctly
+    const affectedOrderId = data.result.orderId;
+    if (affectedOrderId) {
+      setScheduleMap((prev) => {
+        const updated = { ...prev, [affectedOrderId]: data.result.slaStatus };
+        sessionStorage.setItem("scheduleMap", JSON.stringify(updated));
+        return updated;
+      });
+      if (data.result.slaStatus === "RISK") {
+        setOrders((prev) =>
+          prev.map((o) => (o.id === affectedOrderId ? { ...o, status: "At Risk" } : o))
+        );
+      }
     }
     pushNotif(
       `${data.failedMachineId} breakdown — ${data.remainingQty.toLocaleString()} pcs reassigned to ${data.backupMachineId}`,
@@ -133,7 +151,7 @@ export default function Home() {
             <SchedulePage schedule={lastSchedule} order={lastOrder} />
           )}
           {page === "reports" && (
-            <ReportsPage orders={orders} machines={machines} />
+            <ReportsPage orders={orders} machines={machines} schedules={scheduleMap} />
           )}
         </main>
       </div>
