@@ -6,6 +6,7 @@
 
 - **AI-Powered Scheduling**: Uses Google Gemini AI to explain scheduling decisions
 - **Multi-Machine Allocation**: Proportional workload distribution based on machine speed and capacity
+- **Smart Queueing System**: Prevents task overlapping by calculating machine availability from existing schedules
 - **Paper Type Matching**: Intelligent filtering of machines by supported paper types
 - **SLA Compliance**: Real-time deadline tracking with risk alerts
 - **Failure Recovery**: Automatic rescheduling when machines break down

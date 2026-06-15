@@ -33,6 +33,13 @@ export interface ScheduledTask {
   estimatedFinish: string; // ISO string
 }
 
+export interface RiskAnalysis {
+  riskScore: number;
+  riskLevel: "LOW" | "MEDIUM" | "HIGH";
+  anomalies: string[];
+  recommendation: string;
+}
+
 export interface ScheduleResult {
   orderId: string;
   tasks: ScheduledTask[];
@@ -40,6 +47,7 @@ export interface ScheduleResult {
   slaStatus: "SAFE" | "RISK";
   slaDiff: number; // minutes difference (+ahead / -behind)
   explanation?: string;
+  risk?: RiskAnalysis;
 }
 
 export interface FailureSimulation {
