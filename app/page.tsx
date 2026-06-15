@@ -19,40 +19,53 @@ export default function Home() {
   const [lastOrder, setLastOrder] = useState<Order | null>(null);
   const [notifications, setNotifications] = useState<Notif[]>([]);
 
-  const pushNotif = (msg: string, type: Notif["type"]) => {
+  const pushNotif = (msg: string, type: Notif["type"]) =>
     setNotifications((n) => [{ msg, type }, ...n].slice(0, 5));
-  };
 
   const loadOrders = useCallback(async () => {
     try {
       const res = await fetch("/api/orders");
       const data = await res.json();
-      setOrders(data.orders || []);
-    } catch {}
-  }, []);
-
-  const loadMachines = useCallback(async () => {
-    try {
-      const res = await fetch("/api/machines");
-      const data = await res.json();
-      setMachines(data.machines || DEFAULT_MACHINES);
+      if (data.orders?.length) setOrders(data.orders);
     } catch {}
   }, []);
 
   useEffect(() => {
     loadOrders();
-    loadMachines();
-  }, [loadOrders, loadMachines]);
+  }, [loadOrders]);
 
+  // Called when a new order is scheduled from OrdersPage
   function handleScheduled(order: Order, schedule: ScheduleResult) {
     setOrders((prev) => [order, ...prev]);
     setLastSchedule(schedule);
     setLastOrder(order);
-    pushNotif(`${order.id} scheduled — ETA ${new Date(schedule.overallFinish).toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit" })}, SLA ${schedule.slaStatus}`, schedule.slaStatus === "SAFE" ? "success" : "warn");
+    // Update machine utilisations based on schedule tasks
+    setMachines((prev) =>
+      prev.map((m) => {
+        const task = schedule.tasks.find((t) => t.machineId === m.id);
+        if (task) {
+          const pct = Math.min(100, Math.round((task.assignedQty / m.capacity) * 100));
+          return { ...m, utilisation: pct };
+        }
+        return m;
+      })
+    );
+    pushNotif(
+      `${order.id} scheduled — ETA ${new Date(schedule.overallFinish).toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit" })}, SLA ${schedule.slaStatus}`,
+      schedule.slaStatus === "SAFE" ? "success" : "warn"
+    );
     setPage("schedule");
   }
 
-  function handleFailure(data: { newTasks: ScheduledTask[]; result: ScheduleResult; failedMachineId: string; backupMachineId: string; remainingQty: number }) {
+  // Called when a breakdown is simulated from MachinesPage
+  function handleFailure(data: {
+    newTasks: ScheduledTask[];
+    result: ScheduleResult;
+    failedMachineId: string;
+    backupMachineId: string;
+    remainingQty: number;
+  }) {
+    // Update machine statuses
     setMachines((prev) =>
       prev.map((m) => {
         if (m.id === data.failedMachineId) return { ...m, status: "breakdown", utilisation: 0 };
@@ -60,10 +73,20 @@ export default function Home() {
         return m;
       })
     );
+    // Update last schedule with the new tasks
     if (lastSchedule) {
       setLastSchedule({ ...data.result });
     }
-    pushNotif(`${data.failedMachineId} breakdown — ${data.remainingQty.toLocaleString()} pcs reassigned to ${data.backupMachineId}`, "warn");
+    // Update affected order status to "At Risk" if SLA risk
+    if (data.result.slaStatus === "RISK" && lastOrder) {
+      setOrders((prev) =>
+        prev.map((o) => (o.id === lastOrder.id ? { ...o, status: "At Risk" } : o))
+      );
+    }
+    pushNotif(
+      `${data.failedMachineId} breakdown — ${data.remainingQty.toLocaleString()} pcs reassigned to ${data.backupMachineId}`,
+      "warn"
+    );
   }
 
   function handleReset() {
@@ -82,21 +105,29 @@ export default function Home() {
     <div className="flex h-screen overflow-hidden">
       <Sidebar active={page} onChange={setPage} />
       <div className="flex-1 flex flex-col overflow-hidden">
-        {/* Top bar */}
         <header className="h-14 border-b border-gray-200 dark:border-gray-800 bg-white dark:bg-gray-900 px-6 flex items-center justify-between flex-shrink-0">
           <h1 className="text-base font-semibold text-gray-900 dark:text-gray-100">{pageTitle[page]}</h1>
           <Clock />
         </header>
-        {/* Page content */}
         <main className="flex-1 overflow-y-auto p-6">
           {page === "dashboard" && (
-            <DashboardPage orders={orders} machines={machines} lastSchedule={lastSchedule} notifications={notifications} />
+            <DashboardPage
+              orders={orders}
+              machines={machines}
+              lastSchedule={lastSchedule}
+              notifications={notifications}
+            />
           )}
           {page === "orders" && (
             <OrdersPage orders={orders} onScheduled={handleScheduled} />
           )}
           {page === "machines" && (
-            <MachinesPage machines={machines} lastSchedule={lastSchedule} onFailure={handleFailure} onReset={handleReset} />
+            <MachinesPage
+              machines={machines}
+              lastSchedule={lastSchedule}
+              onFailure={handleFailure}
+              onReset={handleReset}
+            />
           )}
           {page === "schedule" && (
             <SchedulePage schedule={lastSchedule} order={lastOrder} />
@@ -113,7 +144,8 @@ export default function Home() {
 function Clock() {
   const [time, setTime] = useState("");
   useEffect(() => {
-    const tick = () => setTime(new Date().toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit", second: "2-digit" }));
+    const tick = () =>
+      setTime(new Date().toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit", second: "2-digit" }));
     tick();
     const id = setInterval(tick, 1000);
     return () => clearInterval(id);
