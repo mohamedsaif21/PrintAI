@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import "./globals.css";
+import "@/lib/env"; // Validate environment variables at startup
 
 export const metadata: Metadata = {
   title: "PrintAI Planner — AI Production Planning",
