@@ -128,9 +128,7 @@ export default function Home() {
               onFailure={handleFailure}
               onReset={handleReset}
             />
-          )}
-          {page === "schedule" && (
-            <SchedulePage schedule={lastSchedule} order={lastOrder} />
+          )}           
           )}
           {page === "reports" && (
             <ReportsPage orders={orders} machines={machines} />
