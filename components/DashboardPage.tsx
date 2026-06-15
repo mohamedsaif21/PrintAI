@@ -2,7 +2,7 @@
 import { Order, Machine, ScheduleResult } from "@/types";
 import { Badge } from "@/components/ui/Badge";
 import { format } from "date-fns";
-import { CheckCircle2, AlertTriangle, Clock, Cpu } from "lucide-react";
+import { CheckCircle2, AlertTriangle, Clock, Cpu, FileText } from "lucide-react";
 
 interface Props {
   orders: Order[];
@@ -34,7 +34,7 @@ export function DashboardPage({ orders, machines, lastSchedule, notifications }:
   return (
     <div className="space-y-5">
       <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-        <MetricCard label="Total orders" value={orders.length} sub={`${scheduled} active`} icon={FileTextIcon} color="bg-blue-500" />
+        <MetricCard label="Total orders" value={orders.length} sub={`${scheduled} active`} icon={FileText} color="bg-blue-500" />
         <MetricCard label="Active machines" value={active} sub={`${machines.filter(m=>m.status==='busy').length} busy · ${machines.filter(m=>m.status==='backup').length} backup`} icon={Cpu} color="bg-violet-500" />
         <MetricCard label="SLA compliance" value={slaRisk === 0 ? "100%" : `${Math.round(((orders.length - slaRisk) / orders.length) * 100)}%`} sub={slaRisk === 0 ? "All on track" : `${slaRisk} at risk`} icon={CheckCircle2} color="bg-emerald-500" />
         <MetricCard label="Sheets scheduled" value={orders.reduce((s, o) => s + o.quantity, 0).toLocaleString()} sub="across all orders" icon={Clock} color="bg-amber-500" />
@@ -90,13 +90,5 @@ export function DashboardPage({ orders, machines, lastSchedule, notifications }:
         </div>
       </div>
     </div>
-  );
-}
-
-function FileTextIcon({ className }: { className?: string }) {
-  return (
-    <svg className={className} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-      <path strokeLinecap="round" strokeLinejoin="round" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
-    </svg>
   );
 }
