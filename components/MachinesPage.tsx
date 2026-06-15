@@ -95,7 +95,7 @@ export function MachinesPage({ machines, lastSchedule, onFailure, onReset }: Pro
         <div className="flex items-center gap-3 flex-wrap">
           <select value={failTarget} onChange={(e) => setFailTarget(e.target.value)}
             className="px-3 py-2 text-sm border border-gray-300 dark:border-gray-700 rounded-lg bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100 focus:outline-none focus:ring-2 focus:ring-blue-500">
-            {machines.filter(m => m.status === "available").map(m => <option key={m.id}>{m.id}</option>)}
+            {machines.filter(m => m.status === "available" || m.status === "busy").map(m => <option key={m.id}>{m.id}</option>)}
           </select>
           <button onClick={triggerFailure} disabled={loading}
             className="flex items-center gap-2 px-4 py-2 bg-red-600 text-white text-sm font-medium rounded-lg hover:bg-red-700 disabled:opacity-60 transition-colors">

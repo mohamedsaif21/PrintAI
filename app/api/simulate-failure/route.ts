@@ -8,6 +8,14 @@ export async function POST(req: NextRequest) {
   try {
     const { failedMachineId, orderId, tasks, completedFraction = 0.5 } = await req.json();
 
+    // #3 — clamp completedFraction to valid 0–1 range
+    const fraction = Math.min(1, Math.max(0, Number(completedFraction)));
+
+    // #6 — validate failedMachineId exists in the provided tasks
+    if (tasks && Array.isArray(tasks) && !tasks.find((t: { machineId: string }) => t.machineId === failedMachineId)) {
+      return NextResponse.json({ error: `Machine ${failedMachineId} is not part of the current schedule tasks.` }, { status: 400 });
+    }
+
     // Fetch order
     let order: Order | null = null;
     try {
@@ -39,14 +47,14 @@ export async function POST(req: NextRequest) {
 
     const { newTasks, result } = simulateBreakdown(
       failedMachineId,
-      completedFraction,
+      fraction,
       originalTasks,
       machines,
       order
     );
 
     const failedTask = originalTasks.find((t) => t.machineId === failedMachineId);
-    const remainingQty = Math.round((failedTask?.assignedQty || 0) * (1 - completedFraction));
+    const remainingQty = Math.round((failedTask?.assignedQty || 0) * (1 - fraction));
     const backupId = newTasks.find((t) => !originalTasks.find((o) => o.machineId === t.machineId))?.machineId || "M5";
 
     const explanation = await generateFailureExplanation(

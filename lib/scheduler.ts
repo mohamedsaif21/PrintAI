@@ -9,31 +9,39 @@ export const DEFAULT_MACHINES: Machine[] = [
   { id: "M5", speed: 300, capacity: 6000,  status: "backup",    paperTypes: ["Coated", "Uncoated"],                    utilisation: 0 },
 ];
 
-export function runScheduler(order: Order, machines: Machine[]): ScheduleResult {
+export function runScheduler(
+  order: Order,
+  machines: Machine[],
+  machineAvailability: Record<string, Date> = {}
+): ScheduleResult {
   // Step 1: Filter available machines that support the paper type
   const eligible = machines
     .filter((m) => m.status === "available" && m.paperTypes.includes(order.paperType))
     .sort((a, b) => b.speed - a.speed); // fastest first
 
   if (eligible.length === 0) {
-    // Fall back to any available machine
-    const fallback = machines.filter((m) => m.status === "available");
-    eligible.push(...fallback);
-  }
-
-  if (eligible.length === 0) {
-    throw new Error("No available machines to schedule this order.");
+    throw new Error(`No available machines support the required paper type: ${order.paperType}.`);
   }
 
   // Step 2: Split workload proportionally by speed
   const totalSpeed = eligible.reduce((sum, m) => sum + m.speed, 0);
   const now = new Date();
 
-  const tasks: ScheduledTask[] = eligible.map((m) => {
-    const share = Math.round((m.speed / totalSpeed) * order.quantity);
+  let unassignedQuantity = order.quantity;
+  const tasks: ScheduledTask[] = eligible.map((m, index) => {
+    const isLast = index === eligible.length - 1;
+    // Give the remaining deficit/surplus to the last machine to prevent rounding leaks
+    const share = isLast ? unassignedQuantity : Math.round((m.speed / totalSpeed) * order.quantity);
+    unassignedQuantity -= share;
+
     const hours = share / m.speed;
     const minutes = Math.round(hours * 60);
-    const finish = addMinutes(now, minutes);
+    
+    const startTime = machineAvailability[m.id] && machineAvailability[m.id] > now
+      ? machineAvailability[m.id]
+      : now;
+    const finish = addMinutes(startTime, minutes);
+
     return {
       machineId: m.id,
       machineSpeed: m.speed,
@@ -64,18 +72,28 @@ export function simulateBreakdown(
   completedFraction: number, // 0-1, how much the failed machine had done
   originalTasks: ScheduledTask[],
   machines: Machine[],
-  order: Order
+  order: Order,
+  machineAvailability: Record<string, Date> = {}
 ): { newTasks: ScheduledTask[]; result: ScheduleResult } {
   const failedTask = originalTasks.find((t) => t.machineId === failedMachineId);
   if (!failedTask) throw new Error("Machine not found in tasks");
 
   const remainingQty = Math.round(failedTask.assignedQty * (1 - completedFraction));
+  if (remainingQty <= 0) {
+    throw new Error("Task already completed, no backup needed.");
+  }
+
   const backup = machines.find((m) => m.status === "backup");
   if (!backup) throw new Error("No backup machine available");
 
   const backupHours = remainingQty / backup.speed;
   const backupMinutes = Math.round(backupHours * 60);
-  const backupFinish = addMinutes(new Date(), backupMinutes);
+
+  const now = new Date();
+  const startTime = machineAvailability[backup.id] && machineAvailability[backup.id] > now 
+    ? machineAvailability[backup.id] 
+    : now;
+  const backupFinish = addMinutes(startTime, backupMinutes);
 
   const newTasks: ScheduledTask[] = [
     ...originalTasks.filter((t) => t.machineId !== failedMachineId),

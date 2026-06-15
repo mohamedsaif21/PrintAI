@@ -4,11 +4,11 @@ import { Badge } from "@/components/ui/Badge";
 import { format } from "date-fns";
 import { PieChart, Pie, Cell, Tooltip, ResponsiveContainer, BarChart, Bar, XAxis, YAxis } from "recharts";
 
-interface Props { orders: Order[]; machines: Machine[] }
+interface Props { orders: Order[]; machines: Machine[]; schedules: Record<string, "SAFE" | "RISK"> }
 
 const COLORS = ["#3b82f6", "#8b5cf6", "#f59e0b", "#10b981", "#ef4444", "#f97316"];
 
-export function ReportsPage({ orders, machines }: Props) {
+export function ReportsPage({ orders, machines, schedules }: Props) {
   const statusData = ["Scheduled", "In Progress", "Completed", "Pending", "At Risk"].map((s) => ({
     name: s, value: orders.filter((o) => o.status === s).length,
   })).filter((d) => d.value > 0);
@@ -20,7 +20,8 @@ export function ReportsPage({ orders, machines }: Props) {
   }));
 
   const totalQty = orders.reduce((s, o) => s + o.quantity, 0);
-  const slaRisk = orders.filter((o) => o.status === "At Risk").length;
+  // #12 — count risk from scheduleMap (source of truth) not just order.status
+  const slaRiskCount = orders.filter((o) => schedules[o.id] === "RISK" || o.status === "At Risk").length;
   const completed = orders.filter((o) => o.status === "Completed").length;
 
   return (
@@ -30,7 +31,7 @@ export function ReportsPage({ orders, machines }: Props) {
         {[
           { label: "Total quantity", value: totalQty.toLocaleString(), sub: "sheets ordered" },
           { label: "Orders completed", value: completed, sub: `of ${orders.length}` },
-          { label: "SLA compliance", value: slaRisk === 0 ? "100%" : `${Math.round(((orders.length - slaRisk) / orders.length) * 100)}%`, sub: slaRisk === 0 ? "No violations" : `${slaRisk} at risk` },
+          { label: "SLA compliance", value: slaRiskCount === 0 ? "100%" : `${Math.round(((orders.length - slaRiskCount) / orders.length) * 100)}%`, sub: slaRiskCount === 0 ? "No violations" : `${slaRiskCount} at risk` },
           { label: "Machines active", value: machines.filter(m => m.status === "available").length, sub: `of ${machines.length}` },
         ].map((c) => (
           <div key={c.label} className="bg-white dark:bg-gray-900 rounded-xl border border-gray-200 dark:border-gray-800 p-4">
@@ -95,7 +96,7 @@ export function ReportsPage({ orders, machines }: Props) {
               <span className="text-gray-600 dark:text-gray-400">{o.product}</span>
               <span className="text-gray-600 dark:text-gray-400">{o.quantity.toLocaleString()}</span>
               <span className="text-gray-600 dark:text-gray-400">{format(new Date(o.deadline), "h:mm a")}</span>
-              <Badge variant={o.status === "At Risk" ? "risk" : "safe"}>{o.status === "At Risk" ? "RISK" : "SAFE"}</Badge>
+              <Badge variant={schedules[o.id] === "RISK" || o.status === "At Risk" ? "risk" : "safe"}>{schedules[o.id] === "RISK" || o.status === "At Risk" ? "RISK" : "SAFE"}</Badge>
             </div>
           ))}
         </div>

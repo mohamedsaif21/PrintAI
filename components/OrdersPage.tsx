@@ -31,6 +31,9 @@ export function OrdersPage({ orders, onScheduled }: Props) {
   async function submit(e: React.FormEvent) {
     e.preventDefault();
     if (!form.customer.trim()) { setError("Customer name is required."); return; }
+    if (Number(form.quantity) < 100) { setError("Quantity must be at least 100 sheets."); return; }
+    // #1 — guard past deadline on client before hitting the API
+    if (Number(form.deadlineHour) <= new Date().getHours()) { setError(`Deadline hour ${form.deadlineHour}:00 has already passed. Choose a later hour.`); return; }
     setError(""); setLoading(true);
     try {
       const res = await fetch("/api/schedule", {

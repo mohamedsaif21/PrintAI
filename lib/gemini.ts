@@ -1,14 +1,31 @@
 import { GoogleGenerativeAI } from "@google/generative-ai";
-import { Order, ScheduleResult } from "@/types";
+import { Order, ScheduleResult, Machine } from "@/types";
 
-const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY!);
+export interface RiskAnalysis {
+  riskScore: number;        // 0-100
+  riskLevel: "LOW" | "MEDIUM" | "HIGH";
+  anomalies: string[];
+  recommendation: string;
+}
+
+const GEMINI_MODEL = process.env.GEMINI_MODEL || "gemini-2.5-flash";
+
+function getModel() {
+  const apiKey = process.env.GEMINI_API_KEY;
+  if (!apiKey) return null;
+
+  return new GoogleGenerativeAI(apiKey).getGenerativeModel({
+    model: GEMINI_MODEL,
+  });
+}
 
 export async function generateScheduleExplanation(
   order: Order,
   result: ScheduleResult
 ): Promise<string> {
   try {
-    const model = genAI.getGenerativeModel({ model: "gemini-1.5-flash" });
+    const model = getModel();
+    if (!model) throw new Error("Gemini is not configured");
 
     const taskSummary = result.tasks
       .map(
@@ -34,6 +51,53 @@ Explain WHY these machines were chosen and what the SLA status means. Keep it un
   }
 }
 
+export async function analyseRisk(
+  order: Order,
+  machines: Machine[],
+  schedule: ScheduleResult
+): Promise<RiskAnalysis> {
+  const fallback: RiskAnalysis = {
+    riskScore: schedule.slaStatus === "RISK" ? 75 : 25,
+    riskLevel: schedule.slaStatus === "RISK" ? "HIGH" : "LOW",
+    anomalies: [],
+    recommendation: schedule.slaStatus === "RISK" ? "SLA deadline is at risk. Consider adding more machines or reducing order quantity." : "Schedule looks healthy.",
+  };
+
+  try {
+    const model = getModel();
+    if (!model) return fallback;
+
+    const machineSummary = machines
+      .map((m) => `${m.id}: status=${m.status}, speed=${m.speed}, utilisation=${m.utilisation}%, paperTypes=${m.paperTypes.join("/")}`)
+      .join("\n");
+
+    const taskSummary = schedule.tasks
+      .map((t) => `${t.machineId}: ${t.assignedQty.toLocaleString()} pcs, ${t.estimatedHours}h`)
+      .join(", ");
+
+    const prompt = `You are an AI risk analyst for a print factory. Analyse the following production data and return a JSON object only — no markdown, no explanation outside JSON.
+
+Order: ${order.quantity.toLocaleString()} ${order.product} for ${order.customer}, paper: ${order.paperType}, priority: ${order.priority}, deadline: ${new Date(order.deadline).toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit" })}.
+Schedule: ${taskSummary}. Overall finish: ${new Date(schedule.overallFinish).toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit" })}. SLA: ${schedule.slaStatus} (${Math.abs(schedule.slaDiff)} min ${schedule.slaDiff >= 0 ? "ahead" : "behind"}).
+Machines:\n${machineSummary}
+
+Return exactly this JSON:
+{
+  "riskScore": <integer 0-100>,
+  "riskLevel": <"LOW" | "MEDIUM" | "HIGH">,
+  "anomalies": [<short string per anomaly detected, max 3>],
+  "recommendation": <one actionable sentence for the supervisor>
+}`;
+
+    const response = await model.generateContent(prompt);
+    const text = response.response.text().trim();
+    const json = text.replace(/```json|```/g, "").trim();
+    return JSON.parse(json) as RiskAnalysis;
+  } catch {
+    return fallback;
+  }
+}
+
 export async function generateFailureExplanation(
   failedMachineId: string,
   backupMachineId: string,
@@ -41,7 +105,8 @@ export async function generateFailureExplanation(
   slaStatus: string
 ): Promise<string> {
   try {
-    const model = genAI.getGenerativeModel({ model: "gemini-1.5-flash" });
+    const model = getModel();
+    if (!model) throw new Error("Gemini is not configured");
     const prompt = `In 2 sentences, explain to a factory supervisor that machine ${failedMachineId} has broken down mid-run with ${remainingQty.toLocaleString()} pieces remaining, and the AI has automatically reassigned the work to ${backupMachineId} (backup machine). SLA is ${slaStatus}. Keep it factual and under 40 words.`;
     const response = await model.generateContent(prompt);
     return response.response.text();
