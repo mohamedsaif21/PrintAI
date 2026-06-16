@@ -1,7 +1,8 @@
-import { Machine, Order, QueuedJob, ScheduleResult, ScheduledTask } from "@/types";
-import { differenceInMinutes, format } from "date-fns";
-import { v4 as uuidv4 } from "uuid";
+import { Machine, Order, ScheduleResult, ScheduledTask, QueuedJob, PreemptionEvent } from "@/types";
+import { differenceInMinutes } from "date-fns";
 import { computeRealFinish } from "@/lib/timeEngine";
+import { v4 as uuidv4 } from "uuid";
+import { resolveMachineConflict, buildJob, priorityBeats, resumeNextIfPaused } from "@/lib/priorityEngine";
 
 export const MACHINE_PAPER_TYPES: Record<string, string[]> = {
   M1: ["Coated"],
@@ -20,36 +21,11 @@ export const DEFAULT_MACHINES: Machine[] = [
 ];
 
 export function normaliseMachine(machine: Machine): Machine {
-  return { ...machine, paperTypes: MACHINE_PAPER_TYPES[machine.id] || machine.paperTypes, queue: machine.queue || [] };
-}
-
-export function seedM2WithRunningJob(machines: Machine[]): Machine[] {
-  return machines.map((machine) => {
-    const normalised = normaliseMachine(machine);
-    if (normalised.id !== "M2" || normalised.queue.length > 0) return normalised;
-
-    const factoryHours = 1.5;
-    const startedAt = new Date();
-    const realFinishAt = computeRealFinish(startedAt, factoryHours);
-    const job: QueuedJob = {
-      jobId: uuidv4().slice(0, 8),
-      orderId: "ORD-SEED-M2",
-      machineId: "M2",
-      assignedQty: Math.round(normalised.speed * factoryHours),
-      estimatedHours: factoryHours,
-      startedAt: startedAt.toISOString(),
-      realFinishAt: realFinishAt.toISOString(),
-      status: "running",
-    };
-
-    return {
-      ...normalised,
-      status: "busy",
-      assignedOrderId: job.orderId,
-      utilisation: 25,
-      queue: [job],
-    };
-  });
+  return {
+    ...machine,
+    paperTypes: MACHINE_PAPER_TYPES[machine.id] || machine.paperTypes,
+    queue: machine.queue || [],
+  };
 }
 
 function queueReadyAt(machine: Machine, fallback: Date): Date {
@@ -57,54 +33,76 @@ function queueReadyAt(machine: Machine, fallback: Date): Date {
   return lastJob ? new Date(lastJob.realFinishAt) : fallback;
 }
 
-export function runScheduler(
-  order: Order,
-  machines: Machine[],
-  machineAvailability: Record<string, Date> = {}
-): ScheduleResult {
+/**
+ * Seeds M2 with one already-running demo job so it starts "busy" for a
+ * realistic reason instead of being permanently busy with nothing behind it.
+ * Call this once when initialising fresh state (e.g. on the client on first load).
+ */
+export function seedM2WithRunningJob(machines: Machine[]): Machine[] {
+  return machines.map(normaliseMachine).map((m) => {
+    if (m.id !== "M2" || m.queue.length > 0) return m;
+    const factoryHours = 1.5; // a believable in-progress job
+    const startedAt = new Date();
+    const realFinishAt = computeRealFinish(startedAt, factoryHours);
+    const job: QueuedJob = {
+      jobId: uuidv4().slice(0, 8),
+      orderId: "ORD-SEED-M2",
+      machineId: "M2",
+      priority: "Medium", // seeded job defaults to Medium so a High order can realistically preempt it
+      assignedQty: Math.round(m.speed * factoryHours),
+      estimatedHours: factoryHours,
+      totalEstimatedHours: factoryHours,
+      startedAt: startedAt.toISOString(),
+      realFinishAt: realFinishAt.toISOString(),
+      status: "running",
+    };
+    return { ...m, status: "busy", assignedOrderId: job.orderId, utilisation: 25, queue: [job] };
+  });
+}
+
+/**
+ * Rule-based AI scheduler.
+ * Considers machines that are truly free right now (status === "available"),
+ * AND busy machines where this order's priority is high enough to preempt
+ * whatever is currently running there. Backup (M5) and breakdown machines
+ * are never picked directly by the normal scheduler — M5 is reserved for
+ * breakdown recovery and same-priority overflow handled by the priority engine.
+ */
+export function runScheduler(order: Order, machines: Machine[]): ScheduleResult {
   const normalisedMachines = machines.map(normaliseMachine);
-  const available = normalisedMachines
-    .filter((m) => m.status === "available" && m.paperTypes.includes(order.paperType))
-    .sort((a, b) => b.speed - a.speed);
-  const queueable = normalisedMachines
-    .filter((m) => m.status === "busy" && m.paperTypes.includes(order.paperType))
-    .sort((a, b) => queueReadyAt(a, new Date()).getTime() - queueReadyAt(b, new Date()).getTime());
-  const eligible = available.length > 0 ? available : queueable;
+  const eligible = normalisedMachines
+    .filter((m) => m.id !== "M5")
+    .filter((m) => m.status === "available" || m.status === "busy")
+    .filter((m) => m.paperTypes.includes(order.paperType))
+    .sort((a, b) => {
+      if (a.status !== b.status) return a.status === "available" ? -1 : 1;
+      return b.speed - a.speed;
+    });
 
   if (eligible.length === 0) {
-    throw new Error(`No available or queueable machines support the required paper type: ${order.paperType}.`);
+    throw new Error(`No production machine is currently able to schedule ${order.paperType} work.`);
   }
 
-  // Step 2: Split workload proportionally by speed
   const totalSpeed = eligible.reduce((sum, m) => sum + m.speed, 0);
   const now = new Date();
 
-  let unassignedQuantity = order.quantity;
-  const tasks: ScheduledTask[] = eligible.map((m, index) => {
-    const isLast = index === eligible.length - 1;
-    // Give the remaining deficit/surplus to the last machine to prevent rounding leaks
-    const share = isLast ? unassignedQuantity : Math.round((m.speed / totalSpeed) * order.quantity);
-    unassignedQuantity -= share;
-
-    const hours = share / m.speed;
-    const startTime = queueReadyAt(m, now);
-    const persistedAvailability = machineAvailability[m.id];
-    const effectiveStart = persistedAvailability && persistedAvailability > startTime ? persistedAvailability : startTime;
-    const finish = computeRealFinish(effectiveStart, hours);
-
+  const tasks: ScheduledTask[] = eligible.map((m) => {
+    const share = Math.round((m.speed / totalSpeed) * order.quantity);
+    const factoryHours = share / m.speed; // "factory time" hours
+    const runningJob = m.queue.find((job) => job.status === "running");
+    const canPreempt = runningJob ? priorityBeats(order.priority, runningJob.priority) : false;
+    const startAt = m.status === "busy" && !canPreempt ? queueReadyAt(m, now) : now;
+    const realFinish = computeRealFinish(startAt, factoryHours);
     return {
       machineId: m.id,
       machineSpeed: m.speed,
       assignedQty: share,
-      estimatedHours: parseFloat(hours.toFixed(2)),
-      estimatedFinish: finish.toISOString(),
+      estimatedHours: parseFloat(factoryHours.toFixed(2)),
+      estimatedFinish: realFinish.toISOString(),
     };
   });
 
-  // Step 3: Overall finish = slowest task (latest finish time)
-  const overallFinish = new Date(
-    Math.max(...tasks.map((t) => new Date(t.estimatedFinish).getTime()))
-  );
+  const overallFinish = new Date(Math.max(...tasks.map((t) => new Date(t.estimatedFinish).getTime())));
   const deadline = new Date(order.deadline);
   const diffMinutes = differenceInMinutes(deadline, overallFinish);
 
@@ -117,76 +115,112 @@ export function runScheduler(
   };
 }
 
+/**
+ * Dispatches a freshly-generated schedule onto each machine's queue, applying
+ * priority conflict resolution wherever a task lands on a machine that's
+ * already busy with a running job (preemption, queueing, or M5 overflow).
+ * Returns the updated machines plus any PreemptionEvents that occurred,
+ * so the caller can show clear notifications about what happened and why.
+ */
 export function dispatchScheduleToMachines(
   order: Order,
   schedule: ScheduleResult,
   machines: Machine[]
-): Machine[] {
-  return machines.map((machine) => {
-    const normalised = normaliseMachine(machine);
-    const task = schedule.tasks.find((item) => item.machineId === normalised.id);
-    if (!task) return normalised;
+): { machines: Machine[]; events: PreemptionEvent[] } {
+  const working = machines.map(normaliseMachine);
+  const events: PreemptionEvent[] = [];
 
-    const isIdle = normalised.queue.length === 0 || normalised.status === "available";
-    const startedAt = isIdle ? new Date() : queueReadyAt(normalised, new Date());
-    const realFinishAt = isIdle ? new Date(task.estimatedFinish) : computeRealFinish(startedAt, task.estimatedHours);
-    const job: QueuedJob = {
-      jobId: task.jobId || uuidv4().slice(0, 8),
+  for (const task of schedule.tasks) {
+    const targetIdx = working.findIndex((m) => m.id === task.machineId);
+    if (targetIdx === -1) continue;
+    const target = working[targetIdx];
+
+    const newJob = buildJob({
       orderId: order.id,
-      machineId: normalised.id,
+      machineId: target.id,
+      priority: order.priority,
       assignedQty: task.assignedQty,
-      estimatedHours: task.estimatedHours,
-      startedAt: startedAt.toISOString(),
-      realFinishAt: realFinishAt.toISOString(),
-      status: isIdle ? "running" : "queued",
-    };
+      factoryHours: task.estimatedHours,
+      status: "queued", // resolveMachineConflict will set the correct status
+    });
 
-    return {
-      ...normalised,
-      status: "busy",
-      assignedOrderId: isIdle ? order.id : normalised.assignedOrderId,
-      utilisation: isIdle ? Math.min(100, Math.max(10, Math.round((task.assignedQty / normalised.capacity) * 100))) : normalised.utilisation,
-      queue: [...normalised.queue, job],
-    };
-  });
+    const backupIdx = working.findIndex((m) => m.id === "M5" && m.id !== target.id);
+    const backup = backupIdx !== -1 ? working[backupIdx] : undefined;
+
+    const { updatedTargetMachine, updatedBackupMachine, event } = resolveMachineConflict(target, backup, newJob);
+
+    working[targetIdx] = updatedTargetMachine;
+    if (updatedBackupMachine && backupIdx !== -1) {
+      working[backupIdx] = updatedBackupMachine;
+    }
+    if (event) events.push(event);
+  }
+
+  return { machines: working, events };
 }
 
+/**
+ * Tick function — call this periodically (e.g. every 3s) on the client.
+ * Checks every machine's running job; if its compressed real-time has elapsed,
+ * marks it completed, frees the machine, and auto-starts the next queued job
+ * on that same machine (if any) — including correctly RESUMING a paused job
+ * (one that was preempted earlier) with its frozen remaining duration.
+ * Returns { machines, justCompleted } so the caller can update order statuses.
+ */
 export function tickMachines(machines: Machine[]): {
   machines: Machine[];
   justCompleted: { orderId: string; machineId: string; jobId: string }[];
 } {
   const justCompleted: { orderId: string; machineId: string; jobId: string }[] = [];
 
-  const updated = machines.map((machine) => {
-    const normalised = normaliseMachine(machine);
-    if (normalised.queue.length === 0) {
-      if (normalised.status === "busy") return { ...normalised, status: "available" as const, utilisation: 0, assignedOrderId: undefined };
-      return normalised;
+  const updated = machines.map((m) => {
+    if (m.queue.length === 0) {
+      if (m.status === "busy") return { ...m, status: "available" as const, utilisation: 0 };
+      return m;
     }
 
-    const current = normalised.queue[0];
-    if (current.status !== "running" || Date.now() < new Date(current.realFinishAt).getTime()) {
-      return normalised;
+    const current = m.queue[0];
+
+    // queue[0] should always be the active slot: either "running" (in progress)
+    // or "paused" (meaning nothing is currently running on this machine and
+    // this paused job is next up — which only happens right after the job
+    // that preempted it has completed and been popped off, see below).
+    if (current.status === "paused") {
+      const resumedQueue = resumeNextIfPaused(m.queue);
+      return { ...m, status: "busy" as const, queue: resumedQueue };
     }
 
-    justCompleted.push({ orderId: current.orderId, machineId: normalised.id, jobId: current.jobId });
-    const remainingQueue = normalised.queue.slice(1);
+    if (current.status !== "running") return m;
+
+    const finished = Date.now() >= new Date(current.realFinishAt).getTime();
+    if (!finished) {
+      return m; // still running, leave as-is
+    }
+
+    // Job finished: pop it, mark completed, start next if present
+    justCompleted.push({ orderId: current.orderId, machineId: m.id, jobId: current.jobId });
+    const remainingQueue = m.queue.slice(1);
+
     if (remainingQueue.length === 0) {
-      return { ...normalised, status: "available" as const, utilisation: 0, assignedOrderId: undefined, queue: [] };
+      return { ...m, status: "available" as const, queue: [], utilisation: 0 };
     }
 
-    const next = {
-      ...remainingQueue[0],
-      status: "running" as const,
-      startedAt: new Date().toISOString(),
-      realFinishAt: computeRealFinish(new Date(), remainingQueue[0].estimatedHours).toISOString(),
-    };
+    // If the next item is a paused job (it was preempted by the job that just
+    // finished), resume it now: fresh start, recomputed finish from its
+    // frozen remaining hours.
+    if (remainingQueue[0].status === "paused") {
+      const resumedQueue = resumeNextIfPaused(remainingQueue);
+      return { ...m, status: "busy" as const, queue: resumedQueue };
+    }
+
+    // Otherwise, auto-pick the next queued job on this machine
+    const next = { ...remainingQueue[0], status: "running" as const, startedAt: new Date().toISOString() };
+    const nextRealFinish = computeRealFinish(new Date(), next.estimatedHours);
+    next.realFinishAt = nextRealFinish.toISOString();
 
     return {
-      ...normalised,
+      ...m,
       status: "busy" as const,
-      assignedOrderId: next.orderId,
-      utilisation: Math.min(100, Math.max(10, Math.round((next.assignedQty / normalised.capacity) * 100))),
       queue: [next, ...remainingQueue.slice(1)],
     };
   });
@@ -196,29 +230,20 @@ export function tickMachines(machines: Machine[]): {
 
 export function simulateBreakdown(
   failedMachineId: string,
-  completedFraction: number, // 0-1, how much the failed machine had done
+  completedFraction: number,
   originalTasks: ScheduledTask[],
   machines: Machine[],
-  order: Order,
-  machineAvailability: Record<string, Date> = {}
+  order: Order
 ): { newTasks: ScheduledTask[]; result: ScheduleResult } {
   const failedTask = originalTasks.find((t) => t.machineId === failedMachineId);
   if (!failedTask) throw new Error("Machine not found in tasks");
 
   const remainingQty = Math.round(failedTask.assignedQty * (1 - completedFraction));
-  if (remainingQty <= 0) {
-    throw new Error("Task already completed, no backup needed.");
-  }
-
   const backup = machines.find((m) => m.status === "backup");
   if (!backup) throw new Error("No backup machine available");
 
   const backupHours = remainingQty / backup.speed;
-  const now = new Date();
-  const startTime = machineAvailability[backup.id] && machineAvailability[backup.id] > now
-    ? machineAvailability[backup.id]
-    : now;
-  const backupFinish = computeRealFinish(startTime, backupHours);
+  const backupFinish = computeRealFinish(new Date(), backupHours);
 
   const newTasks: ScheduledTask[] = [
     ...originalTasks.filter((t) => t.machineId !== failedMachineId),
@@ -231,9 +256,7 @@ export function simulateBreakdown(
     },
   ];
 
-  const overallFinish = new Date(
-    Math.max(...newTasks.map((t) => new Date(t.estimatedFinish).getTime()))
-  );
+  const overallFinish = new Date(Math.max(...newTasks.map((t) => new Date(t.estimatedFinish).getTime())));
   const deadline = new Date(order.deadline);
   const diffMinutes = differenceInMinutes(deadline, overallFinish);
 
@@ -250,5 +273,5 @@ export function simulateBreakdown(
 }
 
 export function formatFinishTime(iso: string): string {
-  return format(new Date(iso), "hh:mm a");
+  return new Date(iso).toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit" });
 }

@@ -3,7 +3,7 @@ import { dispatchScheduleToMachines, runScheduler, DEFAULT_MACHINES, normaliseMa
 import { generateScheduleExplanation, analyseRisk } from "@/lib/gemini";
 import { isSupabaseConfigured, supabase } from "@/lib/supabase";
 import { validateData, CreateOrderSchema } from "@/lib/validation";
-import { Machine, Order, ScheduledTask } from "@/types";
+import { Machine, Order } from "@/types";
 import { v4 as uuidv4 } from "uuid";
 import { addHours, startOfDay, isBefore } from "date-fns";
 
@@ -69,29 +69,8 @@ export async function POST(req: NextRequest) {
       // use defaults if Supabase not configured
     }
 
-    // Fetch existing schedules to calculate machine availability (queueing)
-    const machineAvailability: Record<string, Date> = {};
-    try {
-      // Query uncompleted tasks from schedules
-      const { data: schedulesData } = await supabase.from("schedules").select("tasks");
-      if (schedulesData) {
-        schedulesData.forEach((row) => {
-          const tasks = row.tasks as ScheduledTask[];
-          tasks.forEach((t) => {
-            const finishDate = new Date(t.estimatedFinish);
-            // Track the furthest finish time into the future for each machine
-            if (!machineAvailability[t.machineId] || finishDate > machineAvailability[t.machineId]) {
-              machineAvailability[t.machineId] = finishDate;
-            }
-          });
-        });
-      }
-    } catch {
-      // Fall back to empty availability if fetch fails, behaving as if machines are free
-    }
-
-    // Run rule-based scheduler
-    const result = runScheduler(order, machines, machineAvailability);
+    // Run rule-based scheduler against the live machine queue/status state.
+    const result = runScheduler(order, machines);
 
     // Generate AI explanation via Gemini
     const explanation = await generateScheduleExplanation(order, result);
@@ -99,7 +78,7 @@ export async function POST(req: NextRequest) {
 
     // Run SLA risk + anomaly analysis
     result.risk = await analyseRisk(order, machines, result);
-    const updatedMachines = dispatchScheduleToMachines(order, result, machines);
+    const { machines: updatedMachines, events: preemptionEvents } = dispatchScheduleToMachines(order, result, machines);
 
     // Save order and schedule to Supabase
     if (isSupabaseConfigured()) {
@@ -130,7 +109,7 @@ export async function POST(req: NextRequest) {
       }
     }
 
-    return NextResponse.json({ order, schedule: result, machines: updatedMachines });
+    return NextResponse.json({ order, schedule: result, machines: updatedMachines, preemptionEvents });
   } catch (error: unknown) {
     const message = error instanceof Error ? error.message : "Internal Server Error";
     return NextResponse.json({ error: message }, { status: 500 });

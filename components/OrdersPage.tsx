@@ -1,6 +1,6 @@
 "use client";
 import { useState, useEffect, useRef } from "react";
-import { Machine, Order, ScheduleResult } from "@/types";
+import { Machine, Order, ScheduleResult, PreemptionEvent } from "@/types";
 import { Badge } from "@/components/ui/Badge";
 import { format } from "date-fns";
 import {
@@ -12,7 +12,7 @@ interface Props {
   orders: Order[];
   machines: Machine[];
   scheduleMap: Record<string, { slaStatus: string; slaDiff: number; machines?: string }>;
-  onScheduled: (order: Order, schedule: ScheduleResult, machines?: Machine[]) => void;
+  onScheduled: (order: Order, schedule: ScheduleResult, machines?: Machine[], preemptionEvents?: PreemptionEvent[]) => void;
   addNotification: (msg: string, type: "success" | "warn" | "info") => void;
 }
 
@@ -116,7 +116,7 @@ export function OrdersPage({ orders, machines, scheduleMap, onScheduled, addNoti
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error);
-      onScheduled(data.order, data.schedule, data.machines);
+      onScheduled(data.order, data.schedule, data.machines, data.preemptionEvents || []);
       setForm({ customer: "", product: "Brochure", quantity: "10000", paperType: "Coated", priority: "High", deadlineHour: "18" });
     } catch (err: unknown) {
       setError(err instanceof Error ? err.message : "Failed to schedule order");

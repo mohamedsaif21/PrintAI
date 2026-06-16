@@ -342,7 +342,8 @@ Creates order, runs scheduler, generates AI analysis.
     "explanation": "Gemini text...",
     "risk": { "riskScore": 22, "riskLevel": "LOW", "anomalies": [], "recommendation": "..." }
   },
-  "machines": [{ "id": "M1", "status": "busy", "queue": ["..."] }]
+  "machines": [{ "id": "M1", "status": "busy", "queue": ["..."] }],
+  "preemptionEvents": []
 }
 ```
 
@@ -554,17 +555,18 @@ Variants: `safe`(green) `risk`(red) `warn`(amber) `info`(blue) `gray` `high`(red
 - `computeRealFinish()` calculates the real wall-clock finish time used by live queue countdowns.
 
 **`runScheduler(order, machines)`**
-1. Filter machines: `status === "available"` AND paper type matches order
-2. Fallback: if none match paper type, use any available machine
-3. Sort by speed descending
-4. Split quantity proportionally by speed — last machine absorbs rounding remainder (ensures total = order.quantity exactly)
-5. `overallFinish` = latest task finish time
-6. `slaDiff` = deadline − overallFinish in minutes
-7. `slaStatus` = "SAFE" if diff ≥ 0, else "RISK"
+1. Filter production machines by fixed paper routing and current status (`available` or `busy`)
+2. Exclude M5 from normal scheduling; M5 is used for backup recovery and same-priority overflow
+3. Prefer available compatible machines, then compatible busy machines
+4. If the new priority is higher than the running job, estimate from now because it can preempt
+5. Otherwise estimate after the compatible machine's queued work
+6. `overallFinish` = latest task finish time
+7. `slaDiff` = deadline minus overallFinish in minutes
+8. `slaStatus` = "SAFE" if diff is non-negative, else "RISK"
 
 **`simulateBreakdown(failedMachineId, completedFraction, originalTasks, machines, order)`**
 1. Find failed task, calculate `remainingQty = assignedQty × (1 − completedFraction)`
-2. Find backup: first tries `status === "backup"`, falls back to any `available` machine
+2. Find backup machine with `status === "backup"`
 3. Replaces failed task with new backup task
 4. Recalculates `overallFinish` and SLA
 

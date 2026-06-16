@@ -1,14 +1,16 @@
 export type MachineStatus = "available" | "busy" | "backup" | "breakdown";
 
 export interface QueuedJob {
-  jobId: string;
+  jobId: string;          // unique id for this task instance
   orderId: string;
   machineId: string;
-  assignedQty: number;
-  estimatedHours: number;
-  startedAt: string;
-  realFinishAt: string;
-  status: "queued" | "running" | "completed";
+  priority: "High" | "Medium" | "Low";
+  assignedQty: number;           // original total qty assigned to this job
+  estimatedHours: number;        // "factory time" hours this job takes (current remaining duration)
+  totalEstimatedHours: number;   // original full duration, used to compute % complete
+  startedAt: string;             // ISO, real wall-clock time job (re)started running
+  realFinishAt: string;          // ISO, real wall-clock time job will actually complete (compressed)
+  status: "queued" | "running" | "paused" | "completed";
 }
 
 export interface Machine {
@@ -19,7 +21,7 @@ export interface Machine {
   paperTypes: string[];
   utilisation: number; // 0-100
   assignedOrderId?: string;
-  queue: QueuedJob[];
+  queue: QueuedJob[]; // jobs waiting/running on this machine, in order
 }
 
 export type Priority = "High" | "Medium" | "Low";
@@ -42,15 +44,8 @@ export interface ScheduledTask {
   machineSpeed: number;
   assignedQty: number;
   estimatedHours: number;
-  estimatedFinish: string; // ISO string
-  jobId?: string;
-}
-
-export interface RiskAnalysis {
-  riskScore: number;
-  riskLevel: "LOW" | "MEDIUM" | "HIGH";
-  anomalies: string[];
-  recommendation: string;
+  estimatedFinish: string; // ISO string (real, compressed finish time)
+  jobId?: string; // links to QueuedJob.jobId once dispatched
 }
 
 export interface ScheduleResult {
@@ -61,6 +56,25 @@ export interface ScheduleResult {
   slaDiff: number; // minutes difference (+ahead / -behind)
   explanation?: string;
   risk?: RiskAnalysis;
+}
+
+export interface RiskAnalysis {
+  riskScore: number;
+  riskLevel: "LOW" | "MEDIUM" | "HIGH";
+  anomalies: string[];
+  recommendation: string;
+}
+
+export interface PreemptionEvent {
+  machineId: string;
+  bumpedOrderId: string;
+  bumpedJobId: string;
+  bumpedPriority: "High" | "Medium" | "Low";
+  newOrderId: string;
+  newJobId: string;
+  newPriority: "High" | "Medium" | "Low";
+  reason: "preempted" | "overflow-to-backup"; // preempted = paused on same machine, overflow = sent to M5
+  bumpedProgressPercent: number;
 }
 
 export interface FailureSimulation {

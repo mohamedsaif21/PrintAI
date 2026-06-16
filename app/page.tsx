@@ -6,7 +6,7 @@ import { OrdersPage } from "@/components/OrdersPage";
 import { MachinesPage } from "@/components/MachinesPage";
 import { SchedulePage } from "@/components/SchedulePage";
 import { ReportsPage } from "@/components/ReportsPage";
-import { Order, Machine, OrderStatus, ScheduleResult, ScheduledTask } from "@/types";
+import { Order, Machine, OrderStatus, ScheduleResult, ScheduledTask, PreemptionEvent } from "@/types";
 import { DEFAULT_MACHINES, dispatchScheduleToMachines, normaliseMachine, seedM2WithRunningJob, tickMachines } from "@/lib/scheduler";
 
 type Notif = { msg: string; type: "success" | "warn" | "info" };
@@ -14,7 +14,7 @@ type ScheduleMap = Record<string, { slaStatus: string; slaDiff: number; machines
 const TICK_INTERVAL_MS = 3000;
 
 function machinesFromSchedule(machines: Machine[], order: Order, schedule: ScheduleResult): Machine[] {
-  return dispatchScheduleToMachines(order, schedule, machines.map(normaliseMachine));
+  return dispatchScheduleToMachines(order, schedule, machines.map(normaliseMachine)).machines;
 }
 
 export default function Home() {
@@ -107,7 +107,7 @@ export default function Home() {
     return () => clearInterval(id);
   }, [pushNotif]);
 
-  function handleScheduled(order: Order, schedule: ScheduleResult, updatedMachines?: Machine[]) {
+  function handleScheduled(order: Order, schedule: ScheduleResult, updatedMachines?: Machine[], preemptionEvents: PreemptionEvent[] = []) {
     setOrders((prev) => [order, ...prev]);
     setLastSchedule(schedule);
     setLastOrder(order);
@@ -137,6 +137,13 @@ export default function Home() {
       };
       sessionStorage.setItem("scheduleMap", JSON.stringify(nextMap));
       return nextMap;
+    });
+    preemptionEvents.forEach((event) => {
+      const message =
+        event.reason === "preempted"
+          ? `${event.newOrderId} preempted ${event.bumpedOrderId} on ${event.machineId} at ${event.bumpedProgressPercent}% progress.`
+          : `${event.newOrderId} moved to M5 because ${event.machineId} already had same-priority work.`;
+      pushNotif(message, "warn");
     });
     pushNotif(`${order.id} scheduled — ETA ${new Date(schedule.overallFinish).toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit" })}, SLA ${schedule.slaStatus}`, schedule.slaStatus === "SAFE" ? "success" : "warn");
     setPage("schedule");
@@ -171,8 +178,10 @@ export default function Home() {
                 jobId: `${task.machineId}-${Date.now()}`,
                 orderId: data.result.orderId,
                 machineId: m.id,
+                priority: lastOrder?.priority || "High",
                 assignedQty: task.assignedQty,
                 estimatedHours: task.estimatedHours,
+                totalEstimatedHours: task.estimatedHours,
                 startedAt: new Date().toISOString(),
                 realFinishAt: task.estimatedFinish,
                 status: "running",
