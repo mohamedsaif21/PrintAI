@@ -2,14 +2,16 @@
 import { Order, Machine } from "@/types";
 import { Badge } from "@/components/ui/Badge";
 import { format } from "date-fns";
+import { Download } from "lucide-react";
 import { PieChart, Pie, Cell, Tooltip, ResponsiveContainer, BarChart, Bar, XAxis, YAxis } from "recharts";
+import * as XLSX from "xlsx";
 
-interface Props { orders: Order[]; machines: Machine[]; schedules: Record<string, "SAFE" | "RISK"> }
+interface Props { orders: Order[]; machines: Machine[]; scheduleMap: Record<string, { slaStatus: string; slaDiff: number }> }
 
 const COLORS = ["#3b82f6", "#8b5cf6", "#f59e0b", "#10b981", "#ef4444", "#f97316"];
 
-export function ReportsPage({ orders, machines, schedules }: Props) {
-  const statusData = ["Scheduled", "In Progress", "Completed", "Pending", "At Risk"].map((s) => ({
+export function ReportsPage({ orders, machines, scheduleMap }: Props) {
+  const statusData = ["Pending Approval", "Scheduled", "In Progress", "Completed", "Pending", "At Risk"].map((s) => ({
     name: s, value: orders.filter((o) => o.status === s).length,
   })).filter((d) => d.value > 0);
 
@@ -21,17 +23,72 @@ export function ReportsPage({ orders, machines, schedules }: Props) {
 
   const totalQty = orders.reduce((s, o) => s + o.quantity, 0);
   // #12 — count risk from scheduleMap (source of truth) not just order.status
-  const slaRiskCount = orders.filter((o) => schedules[o.id] === "RISK" || o.status === "At Risk").length;
+  const slaRiskCount = orders.filter((o) => scheduleMap[o.id]?.slaStatus === "RISK" || o.status === "At Risk").length;
   const completed = orders.filter((o) => o.status === "Completed").length;
+  const slaCompliance = orders.length === 0 ? "100%" : slaRiskCount === 0 ? "100%" : `${Math.round(((orders.length - slaRiskCount) / orders.length) * 100)}%`;
+
+  const downloadExcel = () => {
+    const reportDate = new Date();
+    const orderRows = orders.map((o) => ({
+      "Order ID": o.id,
+      Customer: o.customer,
+      Product: o.product,
+      Quantity: o.quantity,
+      Priority: o.priority,
+      Status: o.status,
+      Deadline: format(new Date(o.deadline), "yyyy-MM-dd HH:mm"),
+      SLA: scheduleMap[o.id]?.slaStatus === "RISK" || o.status === "At Risk" ? "RISK" : "SAFE",
+      "SLA Variance (min)": scheduleMap[o.id]?.slaDiff ?? "",
+    }));
+    const machineRows = machines.map((m) => ({
+      "Machine ID": m.id,
+      Status: m.status,
+      "Speed (sheets/hour)": m.speed,
+      "Capacity (sheets/day)": m.capacity,
+      "Utilisation %": m.utilisation,
+      "Assigned Order": m.assignedOrderId || "",
+      "Paper Types": m.paperTypes.join(", "),
+    }));
+    const summaryRows = [
+      { Metric: "Report generated", Value: format(reportDate, "yyyy-MM-dd HH:mm") },
+      { Metric: "Total quantity", Value: totalQty },
+      { Metric: "Orders completed", Value: completed },
+      { Metric: "Total orders", Value: orders.length },
+      { Metric: "SLA compliance", Value: slaCompliance },
+      { Metric: "SLA at risk", Value: slaRiskCount },
+      { Metric: "Machines active", Value: machines.filter((m) => m.status === "available").length },
+    ];
+
+    const workbook = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(workbook, XLSX.utils.json_to_sheet(summaryRows), "Summary");
+    XLSX.utils.book_append_sheet(workbook, XLSX.utils.json_to_sheet(orderRows), "Orders");
+    XLSX.utils.book_append_sheet(workbook, XLSX.utils.json_to_sheet(machineRows), "Machines");
+    XLSX.writeFile(workbook, `printai-report-${format(reportDate, "yyyy-MM-dd-HHmm")}.xlsx`);
+  };
 
   return (
     <div className="space-y-5">
+      <div className="flex items-center justify-between">
+        <div>
+          <h2 className="text-lg font-bold text-gray-900 dark:text-gray-100">Reports</h2>
+          <p className="mt-0.5 text-xs text-gray-500 dark:text-gray-400">Production, SLA, and machine performance</p>
+        </div>
+        <button
+          type="button"
+          onClick={downloadExcel}
+          className="inline-flex items-center gap-2 rounded-lg bg-gray-900 px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-gray-800 dark:bg-gray-100 dark:text-gray-900 dark:hover:bg-white"
+        >
+          <Download className="h-4 w-4" />
+          Download Excel
+        </button>
+      </div>
+
       {/* Summary cards */}
       <div className="grid grid-cols-4 gap-4">
         {[
           { label: "Total quantity", value: totalQty.toLocaleString(), sub: "sheets ordered" },
           { label: "Orders completed", value: completed, sub: `of ${orders.length}` },
-          { label: "SLA compliance", value: slaRiskCount === 0 ? "100%" : `${Math.round(((orders.length - slaRiskCount) / orders.length) * 100)}%`, sub: slaRiskCount === 0 ? "No violations" : `${slaRiskCount} at risk` },
+          { label: "SLA compliance", value: slaCompliance, sub: slaRiskCount === 0 ? "No violations" : `${slaRiskCount} at risk` },
           { label: "Machines active", value: machines.filter(m => m.status === "available").length, sub: `of ${machines.length}` },
         ].map((c) => (
           <div key={c.label} className="bg-white dark:bg-gray-900 rounded-xl border border-gray-200 dark:border-gray-800 p-4">
@@ -96,7 +153,7 @@ export function ReportsPage({ orders, machines, schedules }: Props) {
               <span className="text-gray-600 dark:text-gray-400">{o.product}</span>
               <span className="text-gray-600 dark:text-gray-400">{o.quantity.toLocaleString()}</span>
               <span className="text-gray-600 dark:text-gray-400">{format(new Date(o.deadline), "h:mm a")}</span>
-              <Badge variant={schedules[o.id] === "RISK" || o.status === "At Risk" ? "risk" : "safe"}>{schedules[o.id] === "RISK" || o.status === "At Risk" ? "RISK" : "SAFE"}</Badge>
+              <Badge variant={scheduleMap[o.id]?.slaStatus === "RISK" || o.status === "At Risk" ? "risk" : "safe"}>{scheduleMap[o.id]?.slaStatus === "RISK" || o.status === "At Risk" ? "RISK" : "SAFE"}</Badge>
             </div>
           ))}
         </div>

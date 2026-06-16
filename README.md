@@ -12,6 +12,8 @@
 - **Failure Recovery**: Automatic rescheduling when machines break down
 - **Real-time Dashboard**: Live metrics on orders, machines, and SLA status
 - **Dark Mode Support**: Optimized UI for day and night work
+- **Planned Jobs Module**: Dedicated production plan dashboard with stage-based tracking (Pre-Press, Press, Post-Press)
+- **Bulk AI Optimisation**: Automatically reassess at-risk jobs and suggest machine reassignments
 - **Supabase Backend**: Persistent data storage with real-time synchronization
 
 ## 🚀 Quick Start
@@ -106,6 +108,39 @@
      ('M4', 450,  9000, 'available', array['Coated','Matte','Uncoated'],           0),
      ('M5', 300,  6000, 'backup',    array['Coated','Uncoated'],                   0)
    on conflict (id) do nothing;
+
+   -- Planned Jobs table
+   create table if not exists planned_jobs (
+     id text primary key,
+     order_id text references orders (id) on delete cascade,
+     facility text not null,
+     printing_status text not null,
+     wo_status text not null,
+     sla numeric not null,
+     ageing integer not null,
+     machine_name text not null,
+     schedule_date timestamptz not null,
+     ed_date timestamptz not null,
+     retailer text not null,
+     product_id text not null,
+     base_paper text not null,
+     current_wc text not null,
+     production_type text not null,
+     balance_qty integer not null,
+     balance_value numeric not null,
+     pi_number text not null,
+     wo_quantity integer not null,
+     no_of_plates integer not null,
+     cs_name text not null,
+     line_count integer not null,
+     next_wc text not null,
+     oos boolean not null default false,
+     stage text not null,
+     operator text not null,
+     shift text not null,
+     ai_suggestion text,
+     created_at timestamptz not null default now()
+   );
    ```
 
 6. **Run the development server**
@@ -145,6 +180,9 @@ logError(error, { userId: "user123" });
 - `PATCH /api/orders` - Update order status
 - `GET /api/machines` - Fetch machines
 - `PATCH /api/machines` - Update machine status
+- `GET /api/planned-jobs` - Fetch planned jobs with filtering
+- `PATCH /api/planned-jobs` - Update planned job details
+- `POST /api/planned-jobs/optimise` - Bulk AI optimization for at-risk jobs
 
 ## 🏗️ Architecture
 

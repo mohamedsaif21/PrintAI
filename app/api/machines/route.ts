@@ -1,6 +1,31 @@
 import { NextRequest, NextResponse } from "next/server";
 import { supabase } from "@/lib/supabase";
 import { DEFAULT_MACHINES } from "@/lib/scheduler";
+import { Machine } from "@/types";
+
+type MachineRow = {
+  id: string;
+  speed: number;
+  capacity: number;
+  status: Machine["status"];
+  paper_types?: string[];
+  paperTypes?: string[];
+  utilisation: number;
+  assigned_order_id?: string;
+  assignedOrderId?: string;
+};
+
+function toMachine(row: MachineRow): Machine {
+  return {
+    id: row.id,
+    speed: row.speed,
+    capacity: row.capacity,
+    status: row.status,
+    paperTypes: row.paperTypes || row.paper_types || [],
+    utilisation: row.utilisation,
+    assignedOrderId: row.assignedOrderId || row.assigned_order_id,
+  };
+}
 
 export async function GET() {
   try {
@@ -8,7 +33,7 @@ export async function GET() {
     if (error || !data || data.length === 0) {
       return NextResponse.json({ machines: DEFAULT_MACHINES });
     }
-    return NextResponse.json({ machines: data });
+    return NextResponse.json({ machines: (data as MachineRow[]).map(toMachine) });
   } catch {
     return NextResponse.json({ machines: DEFAULT_MACHINES });
   }

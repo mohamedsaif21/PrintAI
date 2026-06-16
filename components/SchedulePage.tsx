@@ -1,13 +1,14 @@
 "use client";
 import { Order, ScheduleResult } from "@/types";
 import { Badge } from "@/components/ui/Badge";
-import { format } from "date-fns";
-import { Bot, CheckCircle2, AlertTriangle, Cpu, Clock, ShieldAlert, ShieldCheck, ShieldOff } from "lucide-react";
+import { differenceInMinutes, format } from "date-fns";
+import { Bot, CheckCircle2, AlertTriangle, Cpu, Clock, ShieldAlert, ShieldCheck, ShieldOff, XCircle } from "lucide-react";
 import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, Cell } from "recharts";
 
 interface Props {
   schedule: ScheduleResult | null;
   order: Order | null;
+  onApprovalDecision: (orderId: string, status: "In Progress" | "At Risk") => void;
 }
 
 const STEP_LABELS = [
@@ -21,7 +22,9 @@ const STEP_LABELS = [
 
 const BAR_COLORS = ["#3b82f6", "#8b5cf6", "#f59e0b", "#10b981", "#ef4444"];
 
-export function SchedulePage({ schedule, order }: Props) {
+const clamp = (value: number, min: number, max: number) => Math.min(max, Math.max(min, value));
+
+export function SchedulePage({ schedule, order, onApprovalDecision }: Props) {
   if (!schedule || !order) {
     return (
       <div className="bg-white dark:bg-gray-900 rounded-xl border border-gray-200 dark:border-gray-800 p-10 text-center">
@@ -30,6 +33,27 @@ export function SchedulePage({ schedule, order }: Props) {
       </div>
     );
   }
+
+  const now = new Date();
+  const createdAt = new Date(order.createdAt);
+  const deadline = new Date(order.deadline);
+  const finish = new Date(schedule.overallFinish);
+  const delayMinutes = Math.max(0, differenceInMinutes(finish, deadline));
+  const averagePlannedShare = order.quantity / Math.max(schedule.tasks.length, 1);
+  const executionRows = schedule.tasks.map((task) => {
+    const taskFinish = new Date(task.estimatedFinish);
+    const totalMinutes = Math.max(1, differenceInMinutes(taskFinish, createdAt));
+    const elapsedMinutes = clamp(differenceInMinutes(now, createdAt), 0, totalMinutes);
+    const progress = order.status === "Completed" ? 100 : order.status === "Pending Approval" ? 0 : clamp(Math.round((elapsedMinutes / totalMinutes) * 100), 0, 99);
+    const plannedPercent = (averagePlannedShare / order.quantity) * 100;
+    const actualPercent = (task.assignedQty / order.quantity) * 100;
+    return {
+      ...task,
+      progress,
+      variance: Math.round((actualPercent - plannedPercent) * 10) / 10,
+      isDelayed: new Date(task.estimatedFinish) > deadline,
+    };
+  });
 
   const chartData = schedule.tasks.map((t) => ({
     name: t.machineId,
@@ -46,10 +70,53 @@ export function SchedulePage({ schedule, order }: Props) {
             <h3 className="text-sm font-semibold text-gray-900 dark:text-gray-100">Schedule for {order.id}</h3>
             <p className="text-xs text-gray-500 mt-0.5">{order.quantity.toLocaleString()} × {order.product} for {order.customer}</p>
           </div>
-          <Badge variant={schedule.slaStatus === "SAFE" ? "safe" : "risk"} className="text-sm px-3 py-1">
-            SLA {schedule.slaStatus}
-          </Badge>
+          <div className="flex flex-col items-end gap-2">
+            <Badge variant={order.status === "Pending Approval" ? "warn" : order.status === "At Risk" ? "risk" : "safe"} className="text-sm px-3 py-1">
+              {order.status}
+            </Badge>
+            <Badge variant={schedule.slaStatus === "SAFE" ? "safe" : "risk"} className="text-sm px-3 py-1">
+              SLA {schedule.slaStatus}
+            </Badge>
+          </div>
         </div>
+
+        {order.status === "Pending Approval" && (
+          <div className="mb-4 rounded-lg border border-amber-200 bg-amber-50 p-3 dark:border-amber-800 dark:bg-amber-950/30">
+            <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+              <div>
+                <p className="text-sm font-semibold text-amber-800 dark:text-amber-300">Pending Approval</p>
+                <p className="mt-0.5 text-xs text-amber-700 dark:text-amber-400">Review the schedule before releasing this order to production.</p>
+              </div>
+              <div className="flex gap-2">
+                <button
+                  type="button"
+                  onClick={() => onApprovalDecision(order.id, "At Risk")}
+                  className="inline-flex items-center gap-1.5 rounded-lg border border-red-200 bg-white px-3 py-1.5 text-sm font-medium text-red-700 hover:bg-red-50 dark:border-red-900 dark:bg-gray-900 dark:text-red-300 dark:hover:bg-red-950/30"
+                >
+                  <XCircle className="h-4 w-4" />
+                  Reject
+                </button>
+                <button
+                  type="button"
+                  onClick={() => onApprovalDecision(order.id, "In Progress")}
+                  className="inline-flex items-center gap-1.5 rounded-lg bg-emerald-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-emerald-700"
+                >
+                  <CheckCircle2 className="h-4 w-4" />
+                  Approve
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {delayMinutes > 0 && (
+          <div className="mb-4 rounded-lg border border-red-200 bg-red-50 p-3 text-sm text-red-800 dark:border-red-800 dark:bg-red-950/30 dark:text-red-300">
+            <div className="flex items-center gap-2">
+              <AlertTriangle className="h-4 w-4 flex-shrink-0" />
+              <span>This schedule is projected to finish {delayMinutes} min after the deadline.</span>
+            </div>
+          </div>
+        )}
 
         <div className="grid grid-cols-3 gap-4">
           <div className="bg-gray-50 dark:bg-gray-800 rounded-lg p-3">
@@ -126,6 +193,50 @@ export function SchedulePage({ schedule, order }: Props) {
               </div>
             ))}
           </div>
+        </div>
+      </div>
+
+      {/* Execution tracking */}
+      <div className="bg-white dark:bg-gray-900 rounded-xl border border-gray-200 dark:border-gray-800">
+        <div className="flex items-center justify-between border-b border-gray-200 px-5 py-3 dark:border-gray-800">
+          <div>
+            <h3 className="text-sm font-semibold text-gray-900 dark:text-gray-100">Execution tracking</h3>
+            <p className="mt-0.5 text-xs text-gray-500">Progress per task, variance vs planned split, and delay alerts.</p>
+          </div>
+          <Badge variant={delayMinutes > 0 ? "risk" : "safe"}>{delayMinutes > 0 ? "Delay Alert" : "On Plan"}</Badge>
+        </div>
+        <div className="divide-y divide-gray-100 dark:divide-gray-800">
+          {executionRows.map((task, i) => (
+            <div key={task.machineId} className="grid gap-3 px-5 py-4 md:grid-cols-[110px_1fr_130px_150px] md:items-center">
+              <div>
+                <p className="text-sm font-semibold text-gray-900 dark:text-gray-100">{task.machineId}</p>
+                <p className="text-xs text-gray-500">{task.assignedQty.toLocaleString()} sheets</p>
+              </div>
+              <div>
+                <div className="mb-1 flex items-center justify-between text-xs text-gray-500">
+                  <span>{task.progress}% complete</span>
+                  <span>Finish {format(new Date(task.estimatedFinish), "h:mm a")}</span>
+                </div>
+                <div className="h-2 rounded-full bg-gray-100 dark:bg-gray-800">
+                  <div
+                    className="h-2 rounded-full"
+                    style={{ width: `${task.progress}%`, backgroundColor: BAR_COLORS[i % BAR_COLORS.length] }}
+                  />
+                </div>
+              </div>
+              <div>
+                <p className="text-xs text-gray-500">Variance vs plan</p>
+                <p className={`text-sm font-semibold ${Math.abs(task.variance) > 10 ? "text-amber-600" : "text-gray-900 dark:text-gray-100"}`}>
+                  {task.variance > 0 ? "+" : ""}{task.variance}%
+                </p>
+              </div>
+              <div className="flex justify-start md:justify-end">
+                <Badge variant={task.isDelayed ? "risk" : "safe"}>
+                  {task.isDelayed ? "Delayed" : "On time"}
+                </Badge>
+              </div>
+            </div>
+          ))}
         </div>
       </div>
 

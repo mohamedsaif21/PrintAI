@@ -3,9 +3,26 @@ import { runScheduler, DEFAULT_MACHINES } from "@/lib/scheduler";
 import { generateScheduleExplanation, analyseRisk } from "@/lib/gemini";
 import { isSupabaseConfigured, supabase } from "@/lib/supabase";
 import { validateData, CreateOrderSchema } from "@/lib/validation";
-import { Order, ScheduledTask } from "@/types";
+import { Machine, Order, ScheduledTask } from "@/types";
 import { v4 as uuidv4 } from "uuid";
 import { addHours, startOfDay, isBefore } from "date-fns";
+
+type MachineRow = Machine & {
+  paper_types?: string[];
+  assigned_order_id?: string;
+};
+
+function toMachine(row: MachineRow): Machine {
+  return {
+    id: row.id,
+    speed: row.speed,
+    capacity: row.capacity,
+    status: row.status,
+    paperTypes: row.paperTypes || row.paper_types || [],
+    utilisation: row.utilisation,
+    assignedOrderId: row.assignedOrderId || row.assigned_order_id,
+  };
+}
 
 export async function POST(req: NextRequest) {
   try {
@@ -34,7 +51,7 @@ export async function POST(req: NextRequest) {
       paperType,
       priority,
       deadline: deadline.toISOString(),
-      status: "Scheduled",
+      status: "Pending Approval",
       createdAt: new Date().toISOString(),
     };
 
@@ -42,7 +59,7 @@ export async function POST(req: NextRequest) {
     let machines = DEFAULT_MACHINES;
     try {
       const { data } = await supabase.from("machines").select("*");
-      if (data && data.length > 0) machines = data;
+      if (data && data.length > 0) machines = (data as MachineRow[]).map(toMachine);
     } catch {
       // use defaults if Supabase not configured
     }
