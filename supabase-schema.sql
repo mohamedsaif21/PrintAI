@@ -40,12 +40,15 @@ create table if not exists schedules (
 
 -- Seed machines
 insert into machines (id, speed, capacity, status, paper_types, utilisation) values
-  ('M1', 500, 10000, 'available', array['Coated','Glossy','Matte','Uncoated'], 0),
-  ('M2', 400,  8000, 'busy',      array['Coated','Uncoated'],                   100),
-  ('M3', 600, 12000, 'available', array['Coated','Glossy','Matte','Uncoated'], 0),
-  ('M4', 450,  9000, 'available', array['Coated','Matte','Uncoated'],           0),
-  ('M5', 300,  6000, 'backup',    array['Coated','Uncoated'],                   0)
-on conflict (id) do nothing;
+  ('M1', 500, 10000, 'available', array['Coated'], 0),
+  ('M2', 400,  8000, 'busy',      array['Glossy'], 0),
+  ('M3', 600, 12000, 'available', array['Matte'], 0),
+  ('M4', 450,  9000, 'available', array['Uncoated'], 0),
+  ('M5', 300,  6000, 'backup',    array['Coated','Glossy','Matte','Uncoated'], 0)
+on conflict (id) do update set
+  speed = excluded.speed,
+  capacity = excluded.capacity,
+  paper_types = excluded.paper_types;
 
 -- Row Level Security (optional — enable if you add auth)
 -- alter table orders enable row level security;

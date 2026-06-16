@@ -3,16 +3,24 @@ import { differenceInMinutes, format } from "date-fns";
 import { v4 as uuidv4 } from "uuid";
 import { computeRealFinish } from "@/lib/timeEngine";
 
+export const MACHINE_PAPER_TYPES: Record<string, string[]> = {
+  M1: ["Coated"],
+  M2: ["Glossy"],
+  M3: ["Matte"],
+  M4: ["Uncoated"],
+  M5: ["Coated", "Glossy", "Matte", "Uncoated"],
+};
+
 export const DEFAULT_MACHINES: Machine[] = [
-  { id: "M1", speed: 500, capacity: 10000, status: "available", paperTypes: ["Coated", "Glossy", "Matte", "Uncoated"], utilisation: 0, queue: [] },
-  { id: "M2", speed: 400, capacity: 8000,  status: "busy",      paperTypes: ["Coated", "Uncoated"],                    utilisation: 0, queue: [] },
-  { id: "M3", speed: 600, capacity: 12000, status: "available", paperTypes: ["Coated", "Glossy", "Matte", "Uncoated"], utilisation: 0, queue: [] },
-  { id: "M4", speed: 450, capacity: 9000,  status: "available", paperTypes: ["Coated", "Matte", "Uncoated"],           utilisation: 0, queue: [] },
-  { id: "M5", speed: 300, capacity: 6000,  status: "backup",    paperTypes: ["Coated", "Uncoated"],                    utilisation: 0, queue: [] },
+  { id: "M1", speed: 500, capacity: 10000, status: "available", paperTypes: MACHINE_PAPER_TYPES.M1, utilisation: 0, queue: [] },
+  { id: "M2", speed: 400, capacity: 8000,  status: "busy",      paperTypes: MACHINE_PAPER_TYPES.M2, utilisation: 0, queue: [] },
+  { id: "M3", speed: 600, capacity: 12000, status: "available", paperTypes: MACHINE_PAPER_TYPES.M3, utilisation: 0, queue: [] },
+  { id: "M4", speed: 450, capacity: 9000,  status: "available", paperTypes: MACHINE_PAPER_TYPES.M4, utilisation: 0, queue: [] },
+  { id: "M5", speed: 300, capacity: 6000,  status: "backup",    paperTypes: MACHINE_PAPER_TYPES.M5, utilisation: 0, queue: [] },
 ];
 
 export function normaliseMachine(machine: Machine): Machine {
-  return { ...machine, queue: machine.queue || [] };
+  return { ...machine, paperTypes: MACHINE_PAPER_TYPES[machine.id] || machine.paperTypes, queue: machine.queue || [] };
 }
 
 export function seedM2WithRunningJob(machines: Machine[]): Machine[] {

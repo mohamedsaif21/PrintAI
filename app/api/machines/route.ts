@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { supabase } from "@/lib/supabase";
-import { DEFAULT_MACHINES } from "@/lib/scheduler";
+import { DEFAULT_MACHINES, normaliseMachine } from "@/lib/scheduler";
 import { Machine } from "@/types";
 
 type MachineRow = {
@@ -17,7 +17,7 @@ type MachineRow = {
 };
 
 function toMachine(row: MachineRow): Machine {
-  return {
+  return normaliseMachine({
     id: row.id,
     speed: row.speed,
     capacity: row.capacity,
@@ -26,7 +26,7 @@ function toMachine(row: MachineRow): Machine {
     utilisation: row.utilisation,
     assignedOrderId: row.assignedOrderId || row.assigned_order_id,
     queue: row.queue || [],
-  };
+  });
 }
 
 export async function GET() {

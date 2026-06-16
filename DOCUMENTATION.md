@@ -1,6 +1,6 @@
 # PrintAI — Full Project Documentation
 
-> Last updated after: PlannedJobs integration, SLA risk fix, edge case fixes, type mismatch fix
+> Last updated after: machine queue engine, compressed demo clock, approval workflow, report export, and dedicated paper-to-machine routing
 
 ---
 
@@ -145,7 +145,7 @@ Run `supabase-schema.sql` in Supabase SQL Editor.
 | paper_type | text | Coated / Glossy / Matte / Uncoated |
 | priority | text | High / Medium / Low |
 | deadline | timestamptz | |
-| status | text | Pending / Scheduled / In Progress / Completed / At Risk |
+| status | text | Pending / Pending Approval / Scheduled / In Progress / Completed / At Risk |
 | created_at | timestamptz | |
 
 ### machines
@@ -172,15 +172,19 @@ Run `supabase-schema.sql` in Supabase SQL Editor.
 
 > There is NO separate `planned_jobs` table. The Planned Jobs page reads from `schedules` joined with `orders` and maps each schedule task into a job row.
 
+> Runtime queue state is kept in React state for the prototype. Supabase stores machine master data; the live queue is not persisted as a database column in the current build.
+
 ### Seed Machines
 
 | ID | Speed | Capacity | Status | Papers |
 |---|---|---|---|---|
-| M1 | 500/hr | 10,000/day | available | Coated, Glossy, Matte, Uncoated |
-| M2 | 400/hr | 8,000/day | busy | Coated, Uncoated |
-| M3 | 600/hr | 12,000/day | available | Coated, Glossy, Matte, Uncoated |
-| M4 | 450/hr | 9,000/day | available | Coated, Matte, Uncoated |
-| M5 | 300/hr | 6,000/day | backup | Coated, Uncoated |
+| M1 | 500/hr | 10,000/day | available | Coated |
+| M2 | 400/hr | 8,000/day | busy | Glossy |
+| M3 | 600/hr | 12,000/day | available | Matte |
+| M4 | 450/hr | 9,000/day | available | Uncoated |
+| M5 | 300/hr | 6,000/day | backup | Coated, Glossy, Matte, Uncoated |
+
+**Routing rule:** primary machines are single-paper machines. Coated work goes to M1, Glossy to M2, Matte to M3, and Uncoated to M4. M5 supports all paper types but remains a backup machine until breakdown recovery needs it.
 
 ---
 
@@ -230,6 +234,8 @@ POST /api/schedule
                 └── Returns jobs[] + stats{}
 ```
 
+**Current implementation note:** `/api/schedule` accepts the live `currentMachines` state from `OrdersPage`, normalises every machine to the dedicated paper routing, schedules onto free compatible machines first, queues behind compatible busy machines when needed, computes compressed real finish times, and returns updated machine queues to `page.tsx`. `handleScheduled()` stores those returned queues instead of only setting utilisation.
+
 ### Breakdown Simulation flow
 
 ```
@@ -249,6 +255,16 @@ POST /api/simulate-failure
                 └── Push breakdown notification
 ```
 
+**Current implementation note:** breakdown clears the failed machine queue and starts a real running queue job on M5 for the remaining quantity. M5 remains a backup machine until this recovery path is used.
+
+### Queue ticker and completion sync
+
+`app/page.tsx` runs `tickMachines()` every 3 seconds. The ticker checks each machine's running job against its compressed real finish time. When a job finishes:
+- the machine becomes `available` if no more queued work exists
+- the next queued job on that machine starts immediately if present
+- an order is marked `Completed` only after all of its machine tasks have finished
+- the seeded M2 demo job completes without creating a real order
+
 ### Dashboard order status sync
 
 On mount, `loadOrders()` fetches both `/api/orders` and `/api/planned-jobs` in parallel.
@@ -257,6 +273,8 @@ It then derives order status from job states:
 - Any job `printing_status === "Ongoing"` → order `"In Progress"`
 - All jobs `printing_status === "Completed"` → order `"Completed"`
 - Otherwise → `"Scheduled"`
+
+**Current implementation correction:** the live app now fetches `/api/orders` on mount. New orders start as `"Pending Approval"`, Approve/Reject updates status from `SchedulePage`, and the queue ticker marks an order `"Completed"` only after every assigned machine task finishes.
 
 ---
 
@@ -267,7 +285,7 @@ All global state lives in `app/page.tsx`:
 | State | Type | Purpose |
 |---|---|---|
 | `orders` | `Order[]` | All orders (loaded from Supabase + new ones) |
-| `machines` | `Machine[]` | Machine status + utilisation |
+| `machines` | `Machine[]` | Machine status, utilisation, assigned order, and live job queue |
 | `lastSchedule` | `ScheduleResult \| null` | Most recent schedule — shown on AI Schedule tab |
 | `lastOrder` | `Order \| null` | Order belonging to lastSchedule |
 | `notifications` | `Notif[]` | Toast messages, max 5, shown on Dashboard |
@@ -276,10 +294,12 @@ All global state lives in `app/page.tsx`:
 **Important:** `scheduleMap` is persisted to `sessionStorage` so it survives page refresh.
 On mount, it is rehydrated from `sessionStorage`.
 
-**Type:** `Record<string, { slaStatus: string; slaDiff: number }>`
+**Type:** `Record<string, { slaStatus: string; slaDiff: number; machines?: string }>`
 Access pattern: `scheduleMap[orderId]?.slaStatus === "RISK"`
 
 > Do NOT access scheduleMap as `scheduleMap[id] === "RISK"` — it is an object, not a string. This was the cause of the `Cannot read properties of undefined` TypeError in ReportsPage.
+
+`scheduleMap[orderId]?.machines` stores a comma-separated list of assigned machine IDs for Orders and Reports.
 
 ---
 
@@ -297,9 +317,12 @@ Creates order, runs scheduler, generates AI analysis.
   "quantity": 10000,
   "paperType": "Coated",
   "priority": "High",
-  "deadlineHour": 18
+  "deadlineHour": 18,
+  "currentMachines": []
 }
 ```
+
+`currentMachines` is optional but used by the live app. It allows the backend scheduler to respect the current machine queues instead of scheduling from static defaults.
 
 **Validation:**
 - `customer` — required, max 100 chars
@@ -310,7 +333,7 @@ Creates order, runs scheduler, generates AI analysis.
 **Response:**
 ```json
 {
-  "order": { "id": "ORD-A1B2C3", "status": "Scheduled", ... },
+  "order": { "id": "ORD-A1B2C3", "status": "Pending Approval", ... },
   "schedule": {
     "tasks": [{ "machineId": "M3", "assignedQty": 7826, "estimatedHours": 0.65 }],
     "overallFinish": "...",
@@ -318,7 +341,8 @@ Creates order, runs scheduler, generates AI analysis.
     "slaDiff": 208,
     "explanation": "Gemini text...",
     "risk": { "riskScore": 22, "riskLevel": "LOW", "anomalies": [], "recommendation": "..." }
-  }
+  },
+  "machines": [{ "id": "M1", "status": "busy", "queue": ["..."] }]
 }
 ```
 
@@ -481,22 +505,23 @@ Standalone risk analysis endpoint. Same logic as the risk analysis bundled in `/
 ---
 
 ### MachinesPage `[Admin]`
-- Machine cards: ID, speed, capacity, paper types, utilisation bar, status badge
+- Machine cards: ID, speed, capacity, dedicated paper type, live queue countdown/progress, queued-job depth, status badge
 - Breakdown simulator:
   - Dropdown shows `available` AND `busy` machines (not just available)
   - Calls `POST /api/simulate-failure`
   - Shows 3 alert messages after: detection, reassignment, new SLA + explanation
-- Reset button: restores all machines to DEFAULT_MACHINES
+- Reset button: restores DEFAULT_MACHINES and seeds M2 with a running demo queue job
 
 ---
 
 ### ReportsPage `[Admin]`
-- Props: `orders`, `machines`, `scheduleMap: Record<string, { slaStatus: string; slaDiff: number }>`
+- Props: `orders`, `machines`, `scheduleMap: Record<string, { slaStatus: string; slaDiff: number; machines?: string }>`
 - SLA risk count: reads `scheduleMap[orderId]?.slaStatus === "RISK"` (must use `?.` — can be undefined)
 - 4 summary cards: total qty, completed orders, SLA compliance %, active machines
 - Order status pie chart
 - Machine utilisation bar chart
 - SLA performance table: SLA badge reads from scheduleMap first, falls back to order.status
+- Download Excel button exports Summary, Orders, and Machines sheets via SheetJS
 
 ---
 
@@ -514,6 +539,19 @@ Variants: `safe`(green) `risk`(red) `warn`(amber) `info`(blue) `gray` `high`(red
 ## 11. Core Library
 
 ### lib/scheduler.ts
+
+**Current implementation**
+- `normaliseMachine()` enforces fixed paper routing: M1 = Coated, M2 = Glossy, M3 = Matte, M4 = Uncoated, M5 = all paper types as backup.
+- `runScheduler()` picks available compatible machines first; if none are free, it queues behind compatible busy machines.
+- `dispatchScheduleToMachines()` pushes scheduled tasks onto machine queues.
+- `tickMachines()` completes compressed-time jobs, frees machines, and starts the next queued job.
+- `seedM2WithRunningJob()` starts M2 with one real demo queue job instead of a fake permanent busy state.
+
+### lib/timeEngine.ts
+
+- Compression rule: 4 factory hours = 2 real minutes.
+- 1 factory hour = 30 real seconds.
+- `computeRealFinish()` calculates the real wall-clock finish time used by live queue countdowns.
 
 **`runScheduler(order, machines)`**
 1. Filter machines: `status === "available"` AND paper type matches order
