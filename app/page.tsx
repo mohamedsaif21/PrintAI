@@ -3,6 +3,7 @@ import { useState, useEffect, useCallback } from "react";
 import { Sidebar } from "@/components/Sidebar";
 import { DashboardPage } from "@/components/DashboardPage";
 import { OrdersPage } from "@/components/OrdersPage";
+import { PlannedJobsPage } from "@/components/PlannedJobsPage";
 import { MachinesPage } from "@/components/MachinesPage";
 import { SchedulePage } from "@/components/SchedulePage";
 import { ReportsPage } from "@/components/ReportsPage";
@@ -18,7 +19,7 @@ export default function Home() {
   const [lastSchedule, setLastSchedule] = useState<ScheduleResult | null>(null);
   const [lastOrder, setLastOrder] = useState<Order | null>(null);
   const [notifications, setNotifications] = useState<Notif[]>([]);
-  const [scheduleMap, setScheduleMap] = useState<Record<string, { slaStatus: string; slaDiff: number }>>({});
+  const [scheduleMap, setScheduleMap] = useState<Record<string, { slaStatus: string; slaDiff: number; machines?: string }>>({});
 
   const pushNotif = useCallback((msg: string, type: Notif["type"]) => {
     setNotifications((n) => [{ msg, type }, ...n].slice(0, 5));
@@ -26,9 +27,48 @@ export default function Home() {
 
   const loadOrders = useCallback(async () => {
     try {
-      const res = await fetch("/api/orders");
-      const data = await res.json();
-      setOrders(data.orders || []);
+      const [ordersRes, jobsRes] = await Promise.all([
+        fetch("/api/orders"),
+        fetch("/api/planned-jobs")
+      ]);
+      const ordersData = await ordersRes.json();
+      const jobsData = await jobsRes.json();
+      
+      let fetchedOrders: Order[] = ordersData.orders || [];
+      const fetchedJobs = jobsData.jobs || [];
+
+      // Align order statuses with actual running Planned Jobs so Dashboard metrics match perfectly
+      if (fetchedJobs.length > 0) {
+        // Synthesize missing master orders so Dashboard counts align completely with Planned Jobs
+        const uniqueOrderIds = Array.from(new Set(fetchedJobs.map((j: any) => j.order_id)));
+        uniqueOrderIds.forEach((orderId: any) => {
+          if (!fetchedOrders.some((o) => o.id === orderId)) {
+            const job = fetchedJobs.find((j: any) => j.order_id === orderId);
+            fetchedOrders.push({
+              id: orderId,
+              customer: job.retailer,
+              product: job.production_type,
+              quantity: job.wo_quantity,
+              paperType: job.base_paper,
+              priority: job.wo_status,
+              deadline: job.ed_date,
+              status: "Scheduled",
+              createdAt: job.created_at
+            });
+          }
+        });
+
+        fetchedOrders = fetchedOrders.map(order => {
+          const orderJobs = fetchedJobs.filter((j: any) => j.order_id === order.id);
+          if (orderJobs.length === 0) return order; // No sub-jobs yet
+          
+          if (orderJobs.some((j: any) => j.printing_status === "Error")) return { ...order, status: "At Risk" };
+          if (orderJobs.some((j: any) => j.printing_status === "Ongoing")) return { ...order, status: "In Progress" };
+          if (orderJobs.every((j: any) => j.printing_status === "Completed")) return { ...order, status: "Completed" };
+          return { ...order, status: "Scheduled" };
+        });
+      }
+      setOrders(fetchedOrders);
     } catch {}
   }, []);
 
@@ -58,7 +98,10 @@ export default function Home() {
     setLastSchedule(schedule);
     setLastOrder(order);
     setScheduleMap((prev) => {
-      const nextMap = { ...prev, [order.id]: { slaStatus: schedule.slaStatus, slaDiff: schedule.slaDiff } };
+      const nextMap = { 
+        ...prev, 
+        [order.id]: { slaStatus: schedule.slaStatus, slaDiff: schedule.slaDiff, machines: schedule.tasks.map(t => t.machineId).join(", ") } 
+      };
       sessionStorage.setItem("scheduleMap", JSON.stringify(nextMap));
       return nextMap;
     });
@@ -77,7 +120,10 @@ export default function Home() {
     if (lastSchedule) {
       setLastSchedule({ ...data.result });
       setScheduleMap((prev) => {
-        const nextMap = { ...prev, [data.result.orderId]: { slaStatus: data.result.slaStatus, slaDiff: data.result.slaDiff } };
+        const nextMap = { 
+          ...prev, 
+          [data.result.orderId]: { slaStatus: data.result.slaStatus, slaDiff: data.result.slaDiff, machines: data.result.tasks.map(t => t.machineId).join(", ") } 
+        };
         sessionStorage.setItem("scheduleMap", JSON.stringify(nextMap));
         return nextMap;
       });
@@ -92,6 +138,7 @@ export default function Home() {
   const pageTitle: Record<string, string> = {
     dashboard: "Dashboard",
     orders: "Orders",
+    "planned-jobs": "Planned Jobs",
     machines: "Machines",
     schedule: "AI Schedule",
     reports: "Reports",
@@ -113,6 +160,9 @@ export default function Home() {
           )}
           {page === "orders" && (
             <OrdersPage orders={orders} scheduleMap={scheduleMap} onScheduled={handleScheduled} addNotification={pushNotif} />
+          )}
+          {page === "planned-jobs" && (
+            <PlannedJobsPage addNotification={pushNotif} />
           )}
           {page === "machines" && (
             <MachinesPage machines={machines} lastSchedule={lastSchedule} onFailure={handleFailure} onReset={handleReset} />

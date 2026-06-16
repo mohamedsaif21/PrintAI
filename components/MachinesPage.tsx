@@ -133,15 +133,15 @@ function MachineDetail({ machine, lastSchedule, onBack }: { machine: Machine; la
   const activeTask = lastSchedule?.tasks.find(t => t.machineId === machine.id);
   const isWorking = machine.status === "busy" && activeTask;
   
-  const dynamicWoNo = isWorking ? lastSchedule.orderId : extra.woNo;
-  const dynamicSla = isWorking ? new Date(lastSchedule.overallFinish).toLocaleDateString() : extra.slaDeadline;
+  const dynamicWoNo = isWorking ? lastSchedule!.orderId : extra.woNo;
+  const dynamicSla = isWorking ? new Date(lastSchedule!.overallFinish).toLocaleDateString() : extra.slaDeadline;
   const dynamicStart = isWorking ? new Date().toLocaleDateString() : extra.startDate;
-  const dynamicEdd = isWorking ? new Date(activeTask.estimatedFinish).toLocaleDateString() : extra.edd;
+  const dynamicEdd = isWorking ? new Date(activeTask!.estimatedFinish).toLocaleDateString() : extra.edd;
   const jobProgress = isWorking ? machine.utilisation : (machine.status === "available" ? 0 : Math.min(100, machine.utilisation));
 
   // Dynamically insert active task into the job history log
   const dynamicJobHistory = isWorking ? [
-    { date: new Date().toLocaleDateString(), job: `Order ${lastSchedule.orderId}`, qty: activeTask.assignedQty, status: "In Progress" },
+    { date: new Date().toLocaleDateString(), job: `Order ${lastSchedule!.orderId}`, qty: activeTask!.assignedQty, status: "In Progress" },
     ...extra.jobHistory.filter(h => h.status !== "In Progress")
   ] : extra.jobHistory;
 

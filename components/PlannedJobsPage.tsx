@@ -70,7 +70,7 @@ export function PlannedJobsPage({ addNotification }: Props) {
       const data = await res.json();
       
       if (data.suggestions) {
-        const suggestionsMap = new Map(data.suggestions.map((s: BulkOptimiseResult) => [s.jobId, s]));
+        const suggestionsMap = new Map<string, BulkOptimiseResult>(data.suggestions.map((s: BulkOptimiseResult) => [s.jobId, s]));
         setJobs(prev => prev.map(job => {
           const sug = suggestionsMap.get(job.id);
           return sug ? { ...job, ai_suggestion: `${sug.suggestedMachine} — ${sug.reason} (${sug.expectedImpact})` } : job;
