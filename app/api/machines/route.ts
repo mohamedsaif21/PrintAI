@@ -13,6 +13,7 @@ type MachineRow = {
   utilisation: number;
   assigned_order_id?: string;
   assignedOrderId?: string;
+  queue?: Machine["queue"];
 };
 
 function toMachine(row: MachineRow): Machine {
@@ -24,6 +25,7 @@ function toMachine(row: MachineRow): Machine {
     paperTypes: row.paperTypes || row.paper_types || [],
     utilisation: row.utilisation,
     assignedOrderId: row.assignedOrderId || row.assigned_order_id,
+    queue: row.queue || [],
   };
 }
 

@@ -1,5 +1,16 @@
 export type MachineStatus = "available" | "busy" | "backup" | "breakdown";
 
+export interface QueuedJob {
+  jobId: string;
+  orderId: string;
+  machineId: string;
+  assignedQty: number;
+  estimatedHours: number;
+  startedAt: string;
+  realFinishAt: string;
+  status: "queued" | "running" | "completed";
+}
+
 export interface Machine {
   id: string;
   speed: number; // sheets/hour
@@ -8,6 +19,7 @@ export interface Machine {
   paperTypes: string[];
   utilisation: number; // 0-100
   assignedOrderId?: string;
+  queue: QueuedJob[];
 }
 
 export type Priority = "High" | "Medium" | "Low";
@@ -31,6 +43,7 @@ export interface ScheduledTask {
   assignedQty: number;
   estimatedHours: number;
   estimatedFinish: string; // ISO string
+  jobId?: string;
 }
 
 export interface RiskAnalysis {

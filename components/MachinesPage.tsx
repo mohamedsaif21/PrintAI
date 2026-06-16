@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Machine, ScheduleResult, ScheduledTask } from "@/types";
 import {
   AlertTriangle,
@@ -225,6 +225,51 @@ type DetailTab = (typeof DETAIL_TABS)[number];
 
 function formatDate(value: string) {
   return new Date(value).toLocaleDateString();
+}
+
+function LiveJobProgress({ machine }: { machine: Machine }) {
+  const [nowMs, setNowMs] = useState(0);
+
+  useEffect(() => {
+    const tick = () => setNowMs(Date.now());
+    tick();
+    const id = setInterval(tick, 1000);
+    return () => clearInterval(id);
+  }, []);
+
+  const job = machine.queue?.[0];
+  if (!job || job.status !== "running") {
+    return (
+      <div className="space-y-1">
+        <div className="h-1.5 bg-gray-100 dark:bg-gray-800 rounded-full overflow-hidden">
+          <div
+            className={`h-full rounded-full transition-all ${machine.status === "available" ? "bg-emerald-500" : machine.status === "busy" ? "bg-amber-500" : machine.status === "breakdown" ? "bg-red-500" : "bg-gray-400"}`}
+            style={{ width: `${Math.min(machine.utilisation, 100)}%` }}
+          />
+        </div>
+        <p className="text-xs text-gray-400">{machine.utilisation}% utilised</p>
+      </div>
+    );
+  }
+
+  const startMs = new Date(job.startedAt).getTime();
+  const finishMs = new Date(job.realFinishAt).getTime();
+  const clockMs = nowMs || startMs;
+  const progress = clockMs >= finishMs ? 100 : clockMs <= startMs ? 0 : Math.round(((clockMs - startMs) / (finishMs - startMs)) * 100);
+  const remainingSeconds = Math.ceil(Math.max(0, finishMs - clockMs) / 1000);
+  const minutes = Math.floor(remainingSeconds / 60);
+  const seconds = remainingSeconds % 60;
+
+  return (
+    <div className="space-y-1">
+      <div className="h-1.5 bg-gray-100 dark:bg-gray-800 rounded-full overflow-hidden">
+        <div className="h-full rounded-full bg-blue-500 transition-all" style={{ width: `${progress}%` }} />
+      </div>
+      <p className="text-xs text-gray-400 tabular-nums">
+        {progress}% - {minutes}:{seconds.toString().padStart(2, "0")} left
+      </p>
+    </div>
+  );
 }
 
 function MachineDetail({
@@ -562,13 +607,12 @@ export function MachinesPage({ machines, lastSchedule, onFailure, onReset }: Pro
               {machine.assignedOrderId && (
                 <p className="text-xs text-blue-600 dark:text-blue-400 mb-2">Assigned: {machine.assignedOrderId}</p>
               )}
-              <div className="h-1.5 bg-gray-100 dark:bg-gray-800 rounded-full overflow-hidden">
-                <div
-                  className={`h-full rounded-full transition-all ${machine.status === "available" ? "bg-emerald-500" : machine.status === "busy" ? "bg-amber-500" : machine.status === "breakdown" ? "bg-red-500" : "bg-gray-400"}`}
-                  style={{ width: `${Math.min(machine.utilisation, 100)}%` }}
-                />
-              </div>
-              <p className="text-xs text-gray-400 mt-1">{machine.utilisation}% utilised</p>
+              <LiveJobProgress machine={machine} />
+              {machine.queue.length > 1 && (
+                <p className="mt-1 text-xs text-amber-600 dark:text-amber-400">
+                  {machine.queue.length - 1} queued behind current job
+                </p>
+              )}
             </button>
           );
         })}

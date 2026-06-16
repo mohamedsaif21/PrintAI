@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { runScheduler, DEFAULT_MACHINES } from "@/lib/scheduler";
+import { dispatchScheduleToMachines, runScheduler, DEFAULT_MACHINES, normaliseMachine } from "@/lib/scheduler";
 import { generateScheduleExplanation, analyseRisk } from "@/lib/gemini";
 import { isSupabaseConfigured, supabase } from "@/lib/supabase";
 import { validateData, CreateOrderSchema } from "@/lib/validation";
@@ -10,6 +10,7 @@ import { addHours, startOfDay, isBefore } from "date-fns";
 type MachineRow = Machine & {
   paper_types?: string[];
   assigned_order_id?: string;
+  queue?: Machine["queue"];
 };
 
 function toMachine(row: MachineRow): Machine {
@@ -21,12 +22,16 @@ function toMachine(row: MachineRow): Machine {
     paperTypes: row.paperTypes || row.paper_types || [],
     utilisation: row.utilisation,
     assignedOrderId: row.assignedOrderId || row.assigned_order_id,
+    queue: row.queue || [],
   };
 }
 
 export async function POST(req: NextRequest) {
   try {
     const body = await req.json();
+    const currentMachines = Array.isArray(body.currentMachines)
+      ? (body.currentMachines as Machine[]).map(normaliseMachine)
+      : null;
 
     // #5 — validate all incoming fields with zod schema
     const validation = validateData(CreateOrderSchema, body);
@@ -56,10 +61,10 @@ export async function POST(req: NextRequest) {
     };
 
     // Fetch machines from Supabase (or fall back to defaults)
-    let machines = DEFAULT_MACHINES;
+    let machines = currentMachines || DEFAULT_MACHINES;
     try {
       const { data } = await supabase.from("machines").select("*");
-      if (data && data.length > 0) machines = (data as MachineRow[]).map(toMachine);
+      if (!currentMachines && data && data.length > 0) machines = (data as MachineRow[]).map(toMachine);
     } catch {
       // use defaults if Supabase not configured
     }
@@ -94,6 +99,7 @@ export async function POST(req: NextRequest) {
 
     // Run SLA risk + anomaly analysis
     result.risk = await analyseRisk(order, machines, result);
+    const updatedMachines = dispatchScheduleToMachines(order, result, machines);
 
     // Save order and schedule to Supabase
     if (isSupabaseConfigured()) {
@@ -124,7 +130,7 @@ export async function POST(req: NextRequest) {
       }
     }
 
-    return NextResponse.json({ order, schedule: result });
+    return NextResponse.json({ order, schedule: result, machines: updatedMachines });
   } catch (error: unknown) {
     const message = error instanceof Error ? error.message : "Internal Server Error";
     return NextResponse.json({ error: message }, { status: 500 });

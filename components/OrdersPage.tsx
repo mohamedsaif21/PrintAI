@@ -1,6 +1,6 @@
 "use client";
 import { useState, useEffect, useRef } from "react";
-import { Order, ScheduleResult } from "@/types";
+import { Machine, Order, ScheduleResult } from "@/types";
 import { Badge } from "@/components/ui/Badge";
 import { format } from "date-fns";
 import {
@@ -10,8 +10,9 @@ import {
 
 interface Props {
   orders: Order[];
+  machines: Machine[];
   scheduleMap: Record<string, { slaStatus: string; slaDiff: number; machines?: string }>;
-  onScheduled: (order: Order, schedule: ScheduleResult) => void;
+  onScheduled: (order: Order, schedule: ScheduleResult, machines?: Machine[]) => void;
   addNotification: (msg: string, type: "success" | "warn" | "info") => void;
 }
 
@@ -51,7 +52,7 @@ const woStatusToVariant = (s: string): "high" | "medium" | "low" => {
   return "low";
 };
 
-export function OrdersPage({ orders, scheduleMap, onScheduled, addNotification }: Props) {
+export function OrdersPage({ orders, machines, scheduleMap, onScheduled, addNotification }: Props) {
   // ── Form state ──────────────────────────────────────────────────────────
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
@@ -106,11 +107,16 @@ export function OrdersPage({ orders, scheduleMap, onScheduled, addNotification }
       const res = await fetch("/api/schedule", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ ...form, quantity: Number(form.quantity), deadlineHour: Number(form.deadlineHour) }),
+        body: JSON.stringify({
+          ...form,
+          quantity: Number(form.quantity),
+          deadlineHour: Number(form.deadlineHour),
+          currentMachines: machines,
+        }),
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error);
-      onScheduled(data.order, data.schedule);
+      onScheduled(data.order, data.schedule, data.machines);
       setForm({ customer: "", product: "Brochure", quantity: "10000", paperType: "Coated", priority: "High", deadlineHour: "18" });
     } catch (err: unknown) {
       setError(err instanceof Error ? err.message : "Failed to schedule order");
@@ -169,6 +175,7 @@ export function OrdersPage({ orders, scheduleMap, onScheduled, addNotification }
     ageing:           (() => { const d = new Date(o.createdAt); return isNaN(d.getTime()) ? 0 : Math.floor((Date.now() - d.getTime()) / 86400000); })(),
     ai_suggestion:    suggestions.get(o.id) ?? null,
   }));
+  const availableMachines = machines.filter((machine) => machine.status === "available");
 
   const stats = {
     total:    orders.length,
@@ -207,6 +214,15 @@ export function OrdersPage({ orders, scheduleMap, onScheduled, addNotification }
   // ── Render ────────────────────────────────────────────────────────────────
   return (
     <div className="flex flex-col gap-6">
+      <div className={`rounded-lg border px-4 py-2.5 text-sm ${
+        availableMachines.length > 0
+          ? "border-emerald-200 bg-emerald-50 text-emerald-800 dark:border-emerald-800 dark:bg-emerald-900/20 dark:text-emerald-300"
+          : "border-amber-200 bg-amber-50 text-amber-800 dark:border-amber-800 dark:bg-amber-900/20 dark:text-amber-300"
+      }`}>
+        {availableMachines.length > 0
+          ? `${availableMachines.length} machine${availableMachines.length > 1 ? "s" : ""} free now: ${availableMachines.map((machine) => machine.id).join(", ")}.`
+          : "All production machines are busy or unavailable. New orders will queue behind the earliest compatible machine."}
+      </div>
 
       {/* ── SECTION 1: New Order Form ─────────────────────────────────────── */}
       <div className="bg-white dark:bg-gray-900 rounded-xl border border-gray-200 dark:border-gray-800 p-5">

@@ -1,5 +1,5 @@
 "use client";
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 import { Sidebar } from "@/components/Sidebar";
 import { DashboardPage } from "@/components/DashboardPage";
 import { OrdersPage } from "@/components/OrdersPage";
@@ -7,25 +7,14 @@ import { MachinesPage } from "@/components/MachinesPage";
 import { SchedulePage } from "@/components/SchedulePage";
 import { ReportsPage } from "@/components/ReportsPage";
 import { Order, Machine, OrderStatus, ScheduleResult, ScheduledTask } from "@/types";
-import { DEFAULT_MACHINES } from "@/lib/scheduler";
+import { DEFAULT_MACHINES, dispatchScheduleToMachines, normaliseMachine, seedM2WithRunningJob, tickMachines } from "@/lib/scheduler";
 
 type Notif = { msg: string; type: "success" | "warn" | "info" };
 type ScheduleMap = Record<string, { slaStatus: string; slaDiff: number; machines?: string }>;
+const TICK_INTERVAL_MS = 3000;
 
 function machinesFromSchedule(machines: Machine[], order: Order, schedule: ScheduleResult): Machine[] {
-  const assignedTasks = new Map(schedule.tasks.map((task) => [task.machineId, task]));
-
-  return machines.map((machine) => {
-    const task = assignedTasks.get(machine.id);
-    if (!task) return machine;
-
-    return {
-      ...machine,
-      status: "busy",
-      assignedOrderId: order.id,
-      utilisation: Math.min(100, Math.max(10, Math.round((task.assignedQty / machine.capacity) * 100))),
-    };
-  });
+  return dispatchScheduleToMachines(order, schedule, machines.map(normaliseMachine));
 }
 
 export default function Home() {
@@ -35,6 +24,8 @@ export default function Home() {
   const [lastSchedule, setLastSchedule] = useState<ScheduleResult | null>(null);
   const [lastOrder, setLastOrder] = useState<Order | null>(null);
   const [notifications, setNotifications] = useState<Notif[]>([]);
+  const machinesRef = useRef<Machine[]>(machines);
+  const ordersRef = useRef<Order[]>(orders);
   const [scheduleMap, setScheduleMap] = useState<ScheduleMap>(() => {
     if (typeof window === "undefined") return {};
     try {
@@ -49,6 +40,14 @@ export default function Home() {
     setNotifications((n) => [{ msg, type }, ...n].slice(0, 5));
   }, []);
 
+  useEffect(() => {
+    machinesRef.current = machines;
+  }, [machines]);
+
+  useEffect(() => {
+    ordersRef.current = orders;
+  }, [orders]);
+
   const loadOrders = useCallback(async () => {
     try {
       const res = await fetch("/api/orders");
@@ -61,7 +60,7 @@ export default function Home() {
     try {
       const res = await fetch("/api/machines");
       const data = await res.json();
-      setMachines(data.machines || DEFAULT_MACHINES);
+      setMachines(seedM2WithRunningJob((data.machines || DEFAULT_MACHINES).map(normaliseMachine)));
     } catch {}
   }, []);
 
@@ -71,11 +70,49 @@ export default function Home() {
     });
   }, [loadOrders, loadMachines]);
 
-  function handleScheduled(order: Order, schedule: ScheduleResult) {
+  useEffect(() => {
+    const id = setInterval(() => {
+      const { machines: updatedMachines, justCompleted } = tickMachines(machinesRef.current);
+      if (justCompleted.length === 0) return;
+
+      const completedByOrder = justCompleted.reduce<Record<string, string[]>>((acc, item) => {
+        acc[item.orderId] = [...(acc[item.orderId] || []), item.machineId];
+        return acc;
+      }, {});
+      const remainingOrderIds = new Set(
+        updatedMachines.flatMap((machine) =>
+          machine.queue
+            .filter((job) => job.status === "running" || job.status === "queued")
+            .map((job) => job.orderId)
+        )
+      );
+
+      setMachines(updatedMachines);
+      Object.entries(completedByOrder).forEach(([orderId, machineIds]) => {
+        if (orderId === "ORD-SEED-M2") {
+          pushNotif(`M2 seed job completed - machine is now available.`, "success");
+          return;
+        }
+        if (remainingOrderIds.has(orderId)) {
+          pushNotif(`${orderId} finished on ${machineIds.join(", ")}; other machine tasks are still running.`, "info");
+          return;
+        }
+
+        setOrders((prev) => prev.map((order) => (order.id === orderId ? { ...order, status: "Completed" } : order)));
+        setLastOrder((prev) => (prev?.id === orderId ? { ...prev, status: "Completed" } : prev));
+        pushNotif(`${orderId} completed on all assigned machines.`, "success");
+      });
+    }, TICK_INTERVAL_MS);
+
+    return () => clearInterval(id);
+  }, [pushNotif]);
+
+  function handleScheduled(order: Order, schedule: ScheduleResult, updatedMachines?: Machine[]) {
     setOrders((prev) => [order, ...prev]);
     setLastSchedule(schedule);
     setLastOrder(order);
-    setMachines((prev) => machinesFromSchedule(prev, order, schedule));
+    const nextMachines = updatedMachines?.map(normaliseMachine) || machinesFromSchedule(machines, order, schedule);
+    setMachines(nextMachines);
     schedule.tasks.forEach((task) => {
       const machine = machines.find((item) => item.id === task.machineId);
       fetch("/api/machines", {
@@ -120,8 +157,29 @@ export default function Home() {
   function handleFailure(data: { newTasks: ScheduledTask[]; result: ScheduleResult; failedMachineId: string; backupMachineId: string; remainingQty: number }) {
     setMachines((prev) =>
       prev.map((m) => {
-        if (m.id === data.failedMachineId) return { ...m, status: "breakdown", utilisation: 0 };
-        if (m.id === data.backupMachineId) return { ...m, status: "available", utilisation: 50 };
+        if (m.id === data.failedMachineId) return { ...m, status: "breakdown", utilisation: 0, assignedOrderId: undefined, queue: [] };
+        if (m.id === data.backupMachineId) {
+          const task = data.newTasks.find((item) => item.machineId === m.id);
+          if (!task) return { ...m, status: "busy", utilisation: 50 };
+          return {
+            ...m,
+            status: "busy",
+            assignedOrderId: data.result.orderId,
+            utilisation: Math.min(100, Math.max(10, Math.round((task.assignedQty / m.capacity) * 100))),
+            queue: [
+              {
+                jobId: `${task.machineId}-${Date.now()}`,
+                orderId: data.result.orderId,
+                machineId: m.id,
+                assignedQty: task.assignedQty,
+                estimatedHours: task.estimatedHours,
+                startedAt: new Date().toISOString(),
+                realFinishAt: task.estimatedFinish,
+                status: "running",
+              },
+            ],
+          };
+        }
         return m;
       })
     );
@@ -144,7 +202,7 @@ export default function Home() {
   }
 
   function handleReset() {
-    setMachines(DEFAULT_MACHINES);
+    setMachines(seedM2WithRunningJob(DEFAULT_MACHINES));
   }
 
   const pageTitle: Record<string, string> = {
@@ -170,7 +228,7 @@ export default function Home() {
             <DashboardPage orders={orders} machines={machines} lastSchedule={lastSchedule} notifications={notifications} />
           )}
           {page === "orders" && (
-            <OrdersPage orders={orders} scheduleMap={scheduleMap} onScheduled={handleScheduled} addNotification={pushNotif} />
+            <OrdersPage orders={orders} machines={machines} scheduleMap={scheduleMap} onScheduled={handleScheduled} addNotification={pushNotif} />
           )}
           {page === "machines" && (
             <MachinesPage machines={machines} lastSchedule={lastSchedule} onFailure={handleFailure} onReset={handleReset} />
