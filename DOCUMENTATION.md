@@ -1,5 +1,9 @@
 # PrintAI — Full Project Documentation
 
+> Last updated after: PlannedJobs integration, SLA risk fix, edge case fixes, type mismatch fix
+
+---
+
 ## Table of Contents
 
 1. [Project Overview](#1-project-overview)
@@ -7,47 +11,48 @@
 3. [Project Structure](#3-project-structure)
 4. [Environment Setup](#4-environment-setup)
 5. [Database Schema](#5-database-schema)
-6. [Architecture & Data Flow](#6-architecture--data-flow)
-7. [API Reference](#7-api-reference)
-8. [Modules & Components](#8-modules--components)
-9. [Core Library](#9-core-library)
-10. [AI Integration](#10-ai-integration)
-11. [Role Segregation](#11-role-segregation)
-12. [Running the Project](#12-running-the-project)
-13. [Deployment](#13-deployment)
+6. [Role Segregation](#6-role-segregation)
+7. [Architecture & Data Flow](#7-architecture--data-flow)
+8. [State Management](#8-state-management)
+9. [API Reference](#9-api-reference)
+10. [Components](#10-components)
+11. [Core Library](#11-core-library)
+12. [AI Integration](#12-ai-integration)
+13. [Bugs Fixed & Why](#13-bugs-fixed--why)
+14. [Known Incomplete Features](#14-known-incomplete-features)
+15. [Running the Project](#15-running-the-project)
+16. [Deployment](#16-deployment)
 
 ---
 
 ## 1. Project Overview
 
-PrintAI is a production planning and monitoring dashboard built for a print factory managing multiple machines (printers for dress tags, labels, and other print products).
+PrintAI is a production planning and monitoring dashboard for a print factory managing multiple machines — printers for dress tags, labels, and other print products.
 
-It provides two layers:
+**Two user roles:**
+- **Planner** — submits orders, views dashboard and planned jobs
+- **Admin** — manages machines, views AI schedule, reports, and AI optimisation
 
-- **Planning** — Submit orders, auto-schedule across machines, track SLA deadlines
-- **Monitoring** — Real-time machine status, utilisation, breakdown simulation, AI risk analysis
-
-AI is used in two ways:
-
-- **Rule-based scheduler** — deterministic workload split by machine speed/availability
-- **Gemini 1.5 Flash** — natural language explanation of decisions + SLA risk scoring + anomaly detection
+**Two layers:**
+- **Planning** — submit orders → auto-schedule across machines → track SLA
+- **Monitoring** — real-time machine status, utilisation, breakdown recovery, AI risk scoring
 
 ---
 
 ## 2. Tech Stack
 
-| Layer         | Technology              |
-| ------------- | ----------------------- |
-| Framework     | Next.js 16 (App Router) |
-| Language      | TypeScript 5            |
-| Styling       | Tailwind CSS v4         |
-| Database      | Supabase (PostgreSQL)   |
-| AI            | Google Gemini 1.5 Flash |
-| Charts        | Recharts                |
-| Icons         | Lucide React            |
-| Validation    | Zod                     |
-| Date handling | date-fns                |
-| Deployment    | Vercel                  |
+| Layer | Technology |
+|---|---|
+| Framework | Next.js 16 (App Router, Turbopack) |
+| Language | TypeScript 5 |
+| Styling | Tailwind CSS v4 |
+| Database | Supabase (PostgreSQL) |
+| AI | Google Gemini 1.5 Flash |
+| Charts | Recharts |
+| Icons | Lucide React |
+| Validation | Zod |
+| Date handling | date-fns |
+| Deployment | Vercel |
 
 ---
 
@@ -56,48 +61,54 @@ AI is used in two ways:
 ```
 PrintAI/
 │
-├── app/                          # Next.js App Router
+├── app/
 │   ├── api/
 │   │   ├── analyse-risk/
-│   │   │   └── route.ts          # POST — standalone risk analysis
+│   │   │   └── route.ts          # POST — standalone Gemini SLA risk + anomaly analysis
 │   │   ├── machines/
 │   │   │   └── route.ts          # GET / PATCH — machine data
 │   │   ├── orders/
-│   │   │   └── route.ts          # GET / PATCH — order data
+│   │   │   └── route.ts          # GET / PATCH — order data (with seed fallback)
+│   │   ├── planned-jobs/
+│   │   │   ├── route.ts          # GET / PATCH — reads schedules+orders, maps to PlannedJob
+│   │   │   └── optimise/
+│   │   │       └── route.ts      # POST — Gemini AI optimise at-risk jobs
 │   │   ├── schedule/
-│   │   │   └── route.ts          # POST — create order + schedule + AI
+│   │   │   └── route.ts          # POST — create order + run scheduler + Gemini
 │   │   └── simulate-failure/
-│   │       └── route.ts          # POST — breakdown simulation
+│   │       └── route.ts          # POST — machine breakdown + reassignment
 │   ├── globals.css
-│   ├── layout.tsx                # Root layout
-│   └── page.tsx                  # Root — global state + page routing
+│   ├── layout.tsx
+│   └── page.tsx                  # Root — all global state + page routing
 │
 ├── components/
 │   ├── ui/
-│   │   └── Badge.tsx             # Reusable status badge
-│   ├── DashboardPage.tsx         # Planner view — metrics + notifications
-│   ├── ErrorBoundary.tsx         # React error boundary
-│   ├── MachinesPage.tsx          # Admin view — machine cards + simulator
-│   ├── OrdersPage.tsx            # Planner view — order form + list
-│   ├── ReportsPage.tsx           # Admin view — charts + SLA table
-│   ├── SchedulePage.tsx          # Admin view — AI schedule + risk panel
-│   └── Sidebar.tsx               # Navigation
+│   │   └── Badge.tsx             # Reusable badge: safe/risk/warn/info/gray/high/medium/low
+│   ├── DashboardPage.tsx         # [Planner] metrics, notifications, recent orders, utilisation
+│   ├── ErrorBoundary.tsx         # React error boundary wrapper
+│   ├── MachinesPage.tsx          # [Admin] machine cards + breakdown simulator
+│   ├── OrdersPage.tsx            # [Planner] order form + order list
+│   ├── PlannedJobsPage.tsx       # [Planner] job table with filters, search, AI optimise
+│   ├── ReportsPage.tsx           # [Admin] charts + SLA compliance table
+│   ├── SchedulePage.tsx          # [Admin] AI schedule result + risk analysis panel
+│   └── Sidebar.tsx               # Navigation sidebar (6 pages)
 │
 ├── lib/
-│   ├── env.ts                    # Startup env validation
+│   ├── env.ts                    # Startup env variable validation
 │   ├── gemini.ts                 # All Gemini AI functions
-│   ├── logger.ts                 # Structured logger
-│   ├── scheduler.ts              # Core scheduling algorithm
-│   ├── supabase.ts               # Supabase client
-│   ├── utils.ts                  # cn() utility
-│   └── validation.ts             # Zod schemas
+│   ├── logger.ts                 # Structured logger (Sentry-ready)
+│   ├── scheduler.ts              # Core scheduling algorithm + breakdown simulation
+│   ├── supabase.ts               # Supabase lazy singleton client
+│   ├── utils.ts                  # cn() tailwind class merger
+│   └── validation.ts             # Zod schemas for all API inputs
 │
 ├── types/
-│   └── index.ts                  # All shared TypeScript types
+│   ├── index.ts                  # Machine, Order, ScheduleResult, RiskAnalysis etc.
+│   └── planned-jobs.ts           # PlannedJob, PlannedJobsStats, BulkOptimiseResult
 │
-├── public/                       # Static assets
-├── .env.local                    # Secrets (gitignored)
-├── .env.example                  # Env template
+├── public/
+├── .env.local                    # Secrets — gitignored
+├── .env.example                  # Template
 ├── supabase-schema.sql           # DB setup script
 ├── next.config.ts
 ├── tsconfig.json
@@ -109,146 +120,176 @@ PrintAI/
 
 ## 4. Environment Setup
 
-Copy `.env.example` to `.env.local` and fill in:
-
 ```env
 NEXT_PUBLIC_SUPABASE_URL=https://your-project.supabase.co
 NEXT_PUBLIC_SUPABASE_ANON_KEY=your_anon_key
 GEMINI_API_KEY=AIzaSy...
 ```
 
-**Getting Supabase keys:**
-
-1. Go to [supabase.com](https://supabase.com) → your project
-2. Settings → API → copy Project URL and anon key
-
-**Getting Gemini key:**
-
-1. Go to [aistudio.google.com/app/apikey](https://aistudio.google.com/app/apikey)
-2. Create API key (must start with `AIza`)
+- Supabase keys: project dashboard → Settings → API
+- Gemini key: [aistudio.google.com/app/apikey](https://aistudio.google.com/app/apikey) — key must start with `AIza`
 
 ---
 
 ## 5. Database Schema
 
-Run `supabase-schema.sql` in your Supabase SQL Editor.
+Run `supabase-schema.sql` in Supabase SQL Editor.
 
 ### orders
-
-| Column     | Type        | Description                                             |
-| ---------- | ----------- | ------------------------------------------------------- |
-| id         | text (PK)   | e.g. `ORD-A1B2C3`                                       |
-| customer   | text        | Customer name                                           |
-| product    | text        | Product type (Brochure, Flyer etc.)                     |
-| quantity   | integer     | Number of sheets                                        |
-| paper_type | text        | Coated / Glossy / Matte / Uncoated                      |
-| priority   | text        | High / Medium / Low                                     |
-| deadline   | timestamptz | Deadline time                                           |
-| status     | text        | Pending / Scheduled / In Progress / Completed / At Risk |
-| created_at | timestamptz | Creation timestamp                                      |
+| Column | Type | Notes |
+|---|---|---|
+| id | text PK | e.g. `ORD-A1B2C3` |
+| customer | text | |
+| product | text | Brochure, Flyer, etc. |
+| quantity | integer | sheets |
+| paper_type | text | Coated / Glossy / Matte / Uncoated |
+| priority | text | High / Medium / Low |
+| deadline | timestamptz | |
+| status | text | Pending / Scheduled / In Progress / Completed / At Risk |
+| created_at | timestamptz | |
 
 ### machines
-
-| Column      | Type      | Description                           |
-| ----------- | --------- | ------------------------------------- |
-| id          | text (PK) | M1–M5                                 |
-| speed       | integer   | Sheets per hour                       |
-| capacity    | integer   | Max sheets per day                    |
-| status      | text      | available / busy / backup / breakdown |
-| paper_types | text[]    | Supported paper types                 |
-| utilisation | integer   | 0–100%                                |
+| Column | Type | Notes |
+|---|---|---|
+| id | text PK | M1–M5 |
+| speed | integer | sheets/hour |
+| capacity | integer | sheets/day |
+| status | text | available / busy / backup / breakdown |
+| paper_types | text[] | supported paper types |
+| utilisation | integer | 0–100 |
 
 ### schedules
+| Column | Type | Notes |
+|---|---|---|
+| id | uuid PK | auto |
+| order_id | text FK | → orders.id |
+| tasks | jsonb | array of ScheduledTask |
+| overall_finish | timestamptz | |
+| sla_status | text | SAFE / RISK |
+| sla_diff | integer | minutes ahead(+) or behind(-) deadline |
+| explanation | text | Gemini-generated |
+| created_at | timestamptz | |
 
-| Column         | Type        | Description                              |
-| -------------- | ----------- | ---------------------------------------- |
-| id             | uuid (PK)   | Auto-generated                           |
-| order_id       | text (FK)   | References orders.id                     |
-| tasks          | jsonb       | Array of ScheduledTask objects           |
-| overall_finish | timestamptz | Estimated completion time                |
-| sla_status     | text        | SAFE / RISK                              |
-| sla_diff       | integer     | Minutes ahead (+) or behind (-) deadline |
-| explanation    | text        | Gemini-generated explanation             |
-| created_at     | timestamptz | Schedule creation time                   |
+> There is NO separate `planned_jobs` table. The Planned Jobs page reads from `schedules` joined with `orders` and maps each schedule task into a job row.
 
-### Seed Data (5 machines)
+### Seed Machines
 
-| ID  | Speed  | Capacity   | Status    | Paper Types                     |
-| --- | ------ | ---------- | --------- | ------------------------------- |
-| M1  | 500/hr | 10,000/day | available | Coated, Glossy, Matte, Uncoated |
-| M2  | 400/hr | 8,000/day  | busy      | Coated, Uncoated                |
-| M3  | 600/hr | 12,000/day | available | Coated, Glossy, Matte, Uncoated |
-| M4  | 450/hr | 9,000/day  | available | Coated, Matte, Uncoated         |
-| M5  | 300/hr | 6,000/day  | backup    | Coated, Uncoated                |
+| ID | Speed | Capacity | Status | Papers |
+|---|---|---|---|---|
+| M1 | 500/hr | 10,000/day | available | Coated, Glossy, Matte, Uncoated |
+| M2 | 400/hr | 8,000/day | busy | Coated, Uncoated |
+| M3 | 600/hr | 12,000/day | available | Coated, Glossy, Matte, Uncoated |
+| M4 | 450/hr | 9,000/day | available | Coated, Matte, Uncoated |
+| M5 | 300/hr | 6,000/day | backup | Coated, Uncoated |
 
 ---
 
-## 6. Architecture & Data Flow
+## 6. Role Segregation
 
-### Order Scheduling Flow
+| Page | Planner | Admin |
+|---|---|---|
+| Dashboard | ✅ | — |
+| Orders | ✅ | — |
+| Planned Jobs | ✅ | — |
+| Machines | — | ✅ |
+| AI Schedule | — | ✅ |
+| Reports | — | ✅ |
+
+> Role routing is currently handled via sidebar visibility only. Authentication and enforced route protection can be added using Supabase Auth + Next.js middleware when needed.
+
+---
+
+## 7. Architecture & Data Flow
+
+### Order → Schedule → Planned Jobs flow
 
 ```
 User fills order form (OrdersPage)
         ↓
 POST /api/schedule
         ├── 1. Zod validation (CreateOrderSchema)
-        ├── 2. Past deadline check
-        ├── 3. Fetch machines from Supabase (fallback to defaults)
-        ├── 4. Fetch existing schedules from Supabase (queueing lookup)
-        ├── 5. runScheduler() — workload split by speed + queueing
-        ├── 6. generateScheduleExplanation() — Gemini narration
-        ├── 7. analyseRisk() — Gemini risk score + anomalies
-        └── 8. Persist order + schedule to Supabase
-                ↓
+        ├── 2. Past deadline check (isBefore guard)
+        ├── 3. Fetch machines from Supabase (fallback: DEFAULT_MACHINES)
+        ├── 4. runScheduler() — split workload by speed ratio
+        ├── 5. generateScheduleExplanation() — Gemini narration
+        ├── 6. analyseRisk() — Gemini risk score + anomalies
+        └── 7. INSERT into orders + schedules tables in Supabase
+                        ↓
         handleScheduled() in page.tsx
-                ├── Add order to orders state
-                ├── Update machine utilisations
-                ├── Update scheduleMap (+ sessionStorage)
+                ├── Prepend order to orders state
+                ├── Update machines utilisation
+                ├── Update scheduleMap + persist to sessionStorage
+                ├── Push notification
                 └── Navigate to AI Schedule tab
+                        ↓
+        PlannedJobsPage → GET /api/planned-jobs
+                ├── Reads schedules JOIN orders from Supabase
+                ├── Maps each task in a schedule → one PlannedJob row
+                │     - stage: first task = pre-press, last = post-press, middle = press
+                │     - printing_status: RISK schedule → "Error", else "Ongoing"
+                └── Returns jobs[] + stats{}
 ```
 
-### Breakdown Simulation Flow
+### Breakdown Simulation flow
 
 ```
 User selects machine + clicks "Trigger breakdown" (MachinesPage)
         ↓
 POST /api/simulate-failure
         ├── 1. Clamp completedFraction to 0–1
-        ├── 2. Validate failedMachineId exists in tasks
-        ├── 3. Fetch order from Supabase
-        ├── 4. simulateBreakdown() — reroute to backup machine
-        └── 5. generateFailureExplanation() — Gemini alert
-                ↓
+        ├── 2. Validate failedMachineId exists in tasks (400 if not)
+        ├── 3. Fetch order from Supabase (fallback: demo order)
+        ├── 4. simulateBreakdown() — reroute remaining qty to backup machine
+        └── 5. generateFailureExplanation() — Gemini alert message
+                        ↓
         handleFailure() in page.tsx
-                ├── Mark failed machine as "breakdown"
-                ├── Update backup machine utilisation
-                ├── Update scheduleMap with new SLA status
-                └── Update order status to "At Risk" if RISK
+                ├── Mark failed machine as "breakdown", utilisation 0
+                ├── Set backup machine utilisation to 50%
+                ├── Update scheduleMap with new SLA (by result.orderId, not lastOrder)
+                └── Push breakdown notification
 ```
 
-### State Management
+### Dashboard order status sync
 
-All global state lives in `app/page.tsx`:
-
-| State         | Type                 | Purpose                                            |
-| ------------- | -------------------- | -------------------------------------------------- |
-| orders        | Order[]              | All orders                                         |
-| machines      | Machine[]            | Machine statuses + utilisations                    |
-| lastSchedule  | ScheduleResult       | Most recent schedule result                        |
-| lastOrder     | Order                | Most recent scheduled order                        |
-| scheduleMap   | Record<orderId, SLA> | SLA status per order (persisted to sessionStorage) |
-| notifications | Notif[]              | Toast notifications (max 5)                        |
+On mount, `loadOrders()` fetches both `/api/orders` and `/api/planned-jobs` in parallel.
+It then derives order status from job states:
+- Any job `printing_status === "Error"` → order `"At Risk"`
+- Any job `printing_status === "Ongoing"` → order `"In Progress"`
+- All jobs `printing_status === "Completed"` → order `"Completed"`
+- Otherwise → `"Scheduled"`
 
 ---
 
-## 7. API Reference
+## 8. State Management
+
+All global state lives in `app/page.tsx`:
+
+| State | Type | Purpose |
+|---|---|---|
+| `orders` | `Order[]` | All orders (loaded from Supabase + new ones) |
+| `machines` | `Machine[]` | Machine status + utilisation |
+| `lastSchedule` | `ScheduleResult \| null` | Most recent schedule — shown on AI Schedule tab |
+| `lastOrder` | `Order \| null` | Order belonging to lastSchedule |
+| `notifications` | `Notif[]` | Toast messages, max 5, shown on Dashboard |
+| `scheduleMap` | `Record<orderId, { slaStatus, slaDiff }>` | SLA status per order — source of truth for Reports |
+
+**Important:** `scheduleMap` is persisted to `sessionStorage` so it survives page refresh.
+On mount, it is rehydrated from `sessionStorage`.
+
+**Type:** `Record<string, { slaStatus: string; slaDiff: number }>`
+Access pattern: `scheduleMap[orderId]?.slaStatus === "RISK"`
+
+> Do NOT access scheduleMap as `scheduleMap[id] === "RISK"` — it is an object, not a string. This was the cause of the `Cannot read properties of undefined` TypeError in ReportsPage.
+
+---
+
+## 9. API Reference
 
 ### POST /api/schedule
 
-Creates an order, runs the scheduler, and generates AI analysis.
+Creates order, runs scheduler, generates AI analysis.
 
-**Request body:**
-
+**Request:**
 ```json
 {
   "customer": "Acme Corp",
@@ -260,33 +301,23 @@ Creates an order, runs the scheduler, and generates AI analysis.
 }
 ```
 
-**Validation rules:**
-
+**Validation:**
 - `customer` — required, max 100 chars
-- `product` — required, max 100 chars
-- `quantity` — positive number, min 100
-- `paperType` — required
-- `priority` — High / Medium / Low
-- `deadlineHour` — integer 0–23, must be in the future
+- `quantity` — positive integer, min 100
+- `priority` — High / Medium / Low only
+- `deadlineHour` — integer 0–23, must be a future hour (checked with `isBefore`)
 
 **Response:**
-
 ```json
 {
   "order": { "id": "ORD-A1B2C3", "status": "Scheduled", ... },
   "schedule": {
-    "orderId": "ORD-A1B2C3",
-    "tasks": [{ "machineId": "M3", "assignedQty": 7826, "estimatedHours": 0.65, ... }],
-    "overallFinish": "2024-01-15T14:32:00.000Z",
+    "tasks": [{ "machineId": "M3", "assignedQty": 7826, "estimatedHours": 0.65 }],
+    "overallFinish": "...",
     "slaStatus": "SAFE",
     "slaDiff": 208,
-    "explanation": "M3 and M1 were selected as the fastest available...",
-    "risk": {
-      "riskScore": 22,
-      "riskLevel": "LOW",
-      "anomalies": [],
-      "recommendation": "Schedule is on track, no action needed."
-    }
+    "explanation": "Gemini text...",
+    "risk": { "riskScore": 22, "riskLevel": "LOW", "anomalies": [], "recommendation": "..." }
   }
 }
 ```
@@ -295,13 +326,9 @@ Creates an order, runs the scheduler, and generates AI analysis.
 
 ### GET /api/orders
 
-Returns all orders from Supabase. Falls back to 4 seed orders if Supabase is unavailable.
+Returns orders from Supabase. Falls back to 4 hardcoded seed orders if Supabase is unavailable.
 
 ### PATCH /api/orders
-
-Updates an order's status.
-
-**Request body:**
 
 ```json
 { "id": "ORD-A1B2C3", "status": "Completed" }
@@ -311,13 +338,9 @@ Updates an order's status.
 
 ### GET /api/machines
 
-Returns all machines from Supabase. Falls back to DEFAULT_MACHINES if unavailable.
+Returns machines from Supabase. Falls back to DEFAULT_MACHINES.
 
 ### PATCH /api/machines
-
-Updates a machine's status or utilisation.
-
-**Request body:**
 
 ```json
 { "id": "M1", "status": "breakdown", "utilisation": 0 }
@@ -327,10 +350,7 @@ Updates a machine's status or utilisation.
 
 ### POST /api/simulate-failure
 
-Simulates a mid-run machine breakdown and reassigns work.
-
-**Request body:**
-
+**Request:**
 ```json
 {
   "failedMachineId": "M1",
@@ -340,11 +360,10 @@ Simulates a mid-run machine breakdown and reassigns work.
 }
 ```
 
-- `completedFraction` — how much the machine had completed (0–1, clamped automatically)
-- `failedMachineId` — must exist in the provided tasks array
+- `completedFraction` is clamped to 0–1 automatically
+- `failedMachineId` must exist in `tasks` — returns 400 with message if not found
 
 **Response:**
-
 ```json
 {
   "newTasks": [...],
@@ -357,206 +376,214 @@ Simulates a mid-run machine breakdown and reassigns work.
 
 ---
 
-### POST /api/analyse-risk
+### GET /api/planned-jobs
 
-Standalone endpoint for Gemini risk analysis.
+Reads `schedules` joined with `orders`. Maps each task in a schedule to one PlannedJob row.
 
-**Request body:**
+**Query params:** `stage`, `shift`, `operator`
+
+**Stage mapping:**
+- Task index 0 → `pre-press`
+- Task index last → `post-press`
+- All others → `press`
+
+**Status mapping:**
+- Schedule `sla_status === "RISK"` → `printing_status: "Error"`
+- Otherwise → `printing_status: "Ongoing"`
+
+Returns empty `{ jobs: [], stats: {...zeros} }` if no schedules exist — does NOT throw error.
+
+### PATCH /api/planned-jobs
+
+Saves AI suggestion text back to the `schedules.explanation` column.
 
 ```json
-{ "order": { ... }, "schedule": { ... } }
+{ "id": "ORD-A1B2C3-M1", "ai_suggestion": "Reassign to M3 — faster speed (saves 2h)" }
 ```
 
-**Response:**
+---
 
+### POST /api/planned-jobs/optimise
+
+Feeds at-risk jobs to Gemini and returns machine reassignment suggestions.
+
+**Request:** `{ jobs: PlannedJob[] }`
+
+**Response:**
 ```json
 {
-  "riskScore": 68,
-  "riskLevel": "MEDIUM",
-  "anomalies": [
-    "Only 1 machine supports Glossy paper",
-    "M2 is busy and unavailable"
-  ],
-  "recommendation": "Consider pre-assigning M3 as primary to reduce single-machine dependency."
+  "suggestions": [
+    { "jobId": "ORD-A1B2C3-M1", "suggestedMachine": "M3", "reason": "Faster speed", "expectedImpact": "saves 2h" }
+  ]
 }
 ```
 
----
-
-## 8. Modules & Components
-
-### page.tsx — Root
-
-Central hub. Owns all state and passes data + callbacks to child pages.
-
-Key functions:
-
-- `handleScheduled(order, schedule)` — called after successful scheduling
-- `handleFailure(data)` — called after breakdown simulation
-- `handleReset()` — resets machines to defaults
-- `loadOrders()` — fetches orders from Supabase on mount
+Has deterministic fallback if Gemini fails.
 
 ---
 
-### DashboardPage
+### POST /api/analyse-risk
 
-**Role: Planner**
+Standalone risk analysis endpoint. Same logic as the risk analysis bundled in `/api/schedule`.
 
-Displays:
+**Request:** `{ order, schedule }`
 
-- 4 metric cards — total orders, active machines, SLA compliance %, sheets scheduled
-- Up to 3 recent notifications (success / warn / info)
+**Response:** `{ riskScore, riskLevel, anomalies[], recommendation }`
+
+---
+
+## 10. Components
+
+### DashboardPage `[Planner]`
+- 4 metric cards: total orders, active machines, SLA compliance %, total sheets scheduled
+- Notification strip (up to 3 shown, max 5 stored)
 - Recent orders list (last 5)
-- Machine utilisation progress bars
+- Machine utilisation progress bars per machine
 
 ---
 
-### OrdersPage
-
-**Role: Planner**
-
-- Order submission form with validation
+### OrdersPage `[Planner]`
+- Order form with client-side validation:
+  - customer required
+  - quantity ≥ 100
+  - deadlineHour must be greater than current hour
 - Calls `POST /api/schedule` on submit
-- Client-side guards: customer required, quantity ≥ 100, deadline must be future hour
-- Displays full order list with priority and status badges
+- Displays full order list with priority + status badges
 
 ---
 
-### SchedulePage
+### PlannedJobsPage `[Planner]`
+- Fetches from `GET /api/planned-jobs` on mount and on filter change
+- Filters: stage (pre-press / press / post-press), shift, operator, search
+- Stage cards are clickable filters — click same stage again to clear
+- AI Optimise button → `POST /api/planned-jobs/optimise` → annotates at-risk jobs with amber sparkle icon
+- Pagination: 10 items per page, Prev/Next buttons
+- Select all / individual checkboxes (selection state only — no bulk action implemented yet)
+- Silent fail on load error — does NOT push notification to Dashboard
 
-**Role: Admin**
+**Buttons with no action yet (UI only):**
+- "Today" date picker button
+- "Assign to" button
+- Filter icon button
+- Layout toggle (list/grid)
 
-Displays the most recent schedule result:
+---
 
-- Summary card — estimated finish, deadline, machines used, SLA badge
-- AI decision steps — 6-step walkthrough of scheduling logic
-- Workload distribution bar chart per machine
-- Risk analysis panel — colour-coded by LOW/MEDIUM/HIGH with anomalies list
+### SchedulePage `[Admin]`
+- Shows `lastSchedule` + `lastOrder` from global state
+- Empty state: bot icon + message if no schedule exists yet
+- Summary card: estimated finish, deadline, machines used, SLA badge
+- AI decision steps: 6-step walkthrough with inline details on steps 4 and 5
+- Workload distribution bar chart (Recharts) + per-machine progress bars
+- Risk analysis panel: colour-coded LOW(green) / MEDIUM(amber) / HIGH(red), risk score, anomalies list, recommendation
 - Gemini explanation panel
 
 ---
 
-### MachinesPage
-
-**Role: Admin**
-
-- Machine cards showing status, speed, capacity, paper types, utilisation bar
-- Breakdown simulator — select any available/busy machine, trigger failure
-- Shows 3 notification alerts after breakdown: detection, reassignment, new SLA
+### MachinesPage `[Admin]`
+- Machine cards: ID, speed, capacity, paper types, utilisation bar, status badge
+- Breakdown simulator:
+  - Dropdown shows `available` AND `busy` machines (not just available)
+  - Calls `POST /api/simulate-failure`
+  - Shows 3 alert messages after: detection, reassignment, new SLA + explanation
+- Reset button: restores all machines to DEFAULT_MACHINES
 
 ---
 
-### ReportsPage
-
-**Role: Admin**
-
-- 4 summary cards — total quantity, completed orders, SLA compliance %, active machines
+### ReportsPage `[Admin]`
+- Props: `orders`, `machines`, `scheduleMap: Record<string, { slaStatus: string; slaDiff: number }>`
+- SLA risk count: reads `scheduleMap[orderId]?.slaStatus === "RISK"` (must use `?.` — can be undefined)
+- 4 summary cards: total qty, completed orders, SLA compliance %, active machines
 - Order status pie chart
 - Machine utilisation bar chart
-- Full SLA performance table — reads from `scheduleMap` as source of truth
+- SLA performance table: SLA badge reads from scheduleMap first, falls back to order.status
 
 ---
 
 ### Sidebar
-
-Navigation between 5 pages. Active page highlighted in blue.
+- 6 nav items: Dashboard, Orders, Planned Jobs, Machines, AI Schedule, Reports
+- Active page highlighted in blue
 
 ---
 
 ### Badge
-
-Reusable pill component. Variants: `safe`, `risk`, `warn`, `info`, `gray`, `high`, `medium`, `low`.
+Variants: `safe`(green) `risk`(red) `warn`(amber) `info`(blue) `gray` `high`(red) `medium`(amber) `low`(gray)
 
 ---
 
-## 9. Core Library
+## 11. Core Library
 
 ### lib/scheduler.ts
 
-**`runScheduler(order, machines, machineAvailability)`**
+**`runScheduler(order, machines)`**
+1. Filter machines: `status === "available"` AND paper type matches order
+2. Fallback: if none match paper type, use any available machine
+3. Sort by speed descending
+4. Split quantity proportionally by speed — last machine absorbs rounding remainder (ensures total = order.quantity exactly)
+5. `overallFinish` = latest task finish time
+6. `slaDiff` = deadline − overallFinish in minutes
+7. `slaStatus` = "SAFE" if diff ≥ 0, else "RISK"
 
-1. Filter machines by `status === "available"` and paper type match
-2. Sort by speed descending (fastest first)
-3. Split quantity proportionally by speed ratio — last machine absorbs rounding remainder
-4. Calculate task `startTime` based on `now` or `machineAvailability[m.id]` (to stack tasks in a queue)
-5. Calculate `overallFinish` = latest task finish time
-6. Compute `slaDiff` = deadline − overallFinish in minutes
-7. Return `slaStatus: "SAFE"` if diff ≥ 0, else `"RISK"`
-
-**`simulateBreakdown(failedMachineId, completedFraction, originalTasks, machines, order, machineAvailability)`**
-
-1. Find failed machine's task, calculate `remainingQty = assignedQty × (1 − completedFraction)`
-2. Find backup machine (status `"backup"` first, then any `"available"`)
-3. Determine backup machine's `startTime` based on its existing queue
-4. Replace failed task with new backup task
-5. Recalculate `overallFinish` and SLA
+**`simulateBreakdown(failedMachineId, completedFraction, originalTasks, machines, order)`**
+1. Find failed task, calculate `remainingQty = assignedQty × (1 − completedFraction)`
+2. Find backup: first tries `status === "backup"`, falls back to any `available` machine
+3. Replaces failed task with new backup task
+4. Recalculates `overallFinish` and SLA
 
 ---
 
 ### lib/gemini.ts
 
-| Function                                                   | Purpose                                                                   |
-| ---------------------------------------------------------- | ------------------------------------------------------------------------- |
-| `generateScheduleExplanation(order, result)`               | 2–3 sentence explanation of why machines were chosen and SLA status       |
-| `analyseRisk(order, machines, schedule)`                   | Returns `riskScore`, `riskLevel`, `anomalies[]`, `recommendation` as JSON |
-| `generateFailureExplanation(failedId, backupId, qty, sla)` | 2-sentence breakdown alert for supervisor                                 |
+| Function | Input | Output |
+|---|---|---|
+| `generateScheduleExplanation` | order, scheduleResult | 2–3 sentence plain-English explanation |
+| `analyseRisk` | order, machines[], scheduleResult | `{ riskScore, riskLevel, anomalies[], recommendation }` |
+| `generateFailureExplanation` | failedId, backupId, remainingQty, slaStatus | 2-sentence breakdown alert |
 
-All functions have deterministic fallbacks if Gemini API fails.
+All three have deterministic fallbacks if Gemini API fails or returns invalid JSON.
+
+`analyseRisk` prompt instructs Gemini to return raw JSON only (no markdown). Response is stripped of code fences before `JSON.parse`.
 
 ---
 
 ### lib/validation.ts
 
-Zod schemas:
+| Schema | Validates |
+|---|---|
+| `CreateOrderSchema` | Used in `POST /api/schedule` |
+| `UpdateOrderSchema` | Used in `PATCH /api/orders` |
+| `UpdateMachineSchema` | Used in `PATCH /api/machines` |
 
-| Schema                | Used in               |
-| --------------------- | --------------------- |
-| `CreateOrderSchema`   | `POST /api/schedule`  |
-| `UpdateOrderSchema`   | `PATCH /api/orders`   |
-| `UpdateMachineSchema` | `PATCH /api/machines` |
-
-Helper: `validateData(schema, data)` returns `{ success, data }` or `{ success: false, error }`.
+`validateData(schema, data)` returns `{ success: true, data }` or `{ success: false, error: string }`.
 
 ---
 
 ### lib/supabase.ts
 
-Lazy singleton Supabase client. Initialised once on first use via Proxy pattern. Throws if env vars are missing.
+Lazy singleton via Proxy. Client is created once on first property access. Throws if `NEXT_PUBLIC_SUPABASE_URL` or `NEXT_PUBLIC_SUPABASE_ANON_KEY` are missing.
 
 ---
 
 ### lib/env.ts
 
-Validates all required env vars on server startup. Throws in production if any are missing. Logs warning in development.
+Validates all 3 required env vars on server startup. In production, throws if any are missing. In development, logs warning only.
 
 ---
 
-### lib/logger.ts
+## 12. AI Integration
 
-Structured logger with `logError`, `logWarn`, `logInfo`. Includes timestamp and context. Ready for Sentry integration.
+Gemini is used in 3 places. It is **never** the decision-maker — the scheduler algorithm makes all decisions. Gemini only narrates, scores, and suggests.
 
----
+### 1. Schedule Explanation
+After `runScheduler()` returns, the result is passed to Gemini with the order details. Gemini writes a 2–3 sentence explanation of why those machines were chosen and what the SLA status means. Shown in the blue panel at the bottom of AI Schedule page.
 
-## 10. AI Integration
+### 2. Risk Analysis
+Also called after every schedule. Gemini receives:
+- Full order details
+- All machine states (status, speed, utilisation, paper types)
+- Schedule result (tasks, finish time, slaDiff, slaStatus)
 
-### How Gemini is used
-
-Gemini is **not** a decision-maker. The scheduler makes all decisions deterministically. Gemini is used for:
-
-1. **Narration** — Explains scheduling decisions in plain English for supervisors
-2. **Risk Scoring** — Analyses full context (machines, load, paper type, SLA margin) and returns a structured risk assessment
-3. **Failure Alerts** — Generates factual breakdown notifications
-
-### Risk Analysis Detail
-
-Input to Gemini:
-
-- Order details (quantity, product, paper type, priority, deadline)
-- All machine states (status, speed, utilisation, supported papers)
-- Schedule result (task assignments, finish time, SLA diff)
-
-Output:
-
+Returns structured JSON:
 ```json
 {
   "riskScore": 0-100,
@@ -566,67 +593,93 @@ Output:
 }
 ```
 
-Fallback (if Gemini unavailable): deterministic score based on `slaStatus`.
+Fallback: `riskScore = 75` if RISK, `25` if SAFE. `riskLevel` mirrors `slaStatus`.
+
+### 3. Failure Explanation
+After `simulateBreakdown()`, Gemini generates a 2-sentence alert for the supervisor explaining the breakdown and reassignment. Shown in the MachinesPage notification strip.
+
+### 4. Planned Job Optimisation
+`POST /api/planned-jobs/optimise` feeds at-risk jobs (high priority or ageing > 5 days) to Gemini. Returns machine reassignment suggestions with reason and expected impact. Jobs with suggestions show an amber sparkle icon in the table.
 
 ---
 
-## 11. Role Segregation
+## 13. Bugs Fixed & Why
 
-| Module      | Planner | Admin |
-| ----------- | ------- | ----- |
-| Dashboard   | ✅      | —     |
-| Orders      | ✅      | —     |
-| AI Schedule | —       | ✅    |
-| Machines    | —       | ✅    |
-| Reports     | —       | ✅    |
+### Logic Errors
 
-> Role-based routing is currently managed via sidebar visibility. Authentication and enforced route protection can be added using Supabase Auth + Next.js middleware.
+| # | Where | Bug | Fix |
+|---|---|---|---|
+| 1 | `scheduler.ts` | `Math.round` on each task caused total qty to drift | Last machine absorbs remainder |
+| 2 | `scheduler.ts` | `simulateBreakdown` threw if no `backup` machine existed | Falls back to any `available` machine |
+| 3 | `page.tsx` | `scheduleMap` not updated after breakdown | Updated in `handleFailure` by `result.orderId` |
+| 4 | `MachinesPage` | Breakdown dropdown excluded `busy` machines | Added `busy` to filter |
+| 5 | `OrdersPage` | Quantity `< 100` only blocked by HTML, not JS | Added JS guard before fetch |
+
+### Edge Cases Fixed
+
+| # | Where | Bug | Fix |
+|---|---|---|---|
+| 1 | `schedule/route.ts` + `OrdersPage` | Past deadline not rejected | `isBefore` check on API + client-side hour check |
+| 2 | `simulate-failure/route.ts` | `completedFraction` outside 0–1 not guarded | `Math.min(1, Math.max(0, fraction))` |
+| 3 | `schedule/route.ts` | Zod schema existed but was never used | `validateData(CreateOrderSchema, body)` added |
+| 4 | `simulate-failure/route.ts` | `failedMachineId` not validated against tasks | Returns 400 if ID not found in tasks |
+| 5 | `page.tsx` | `scheduleMap` lost on page refresh | Persisted to `sessionStorage`, rehydrated on mount |
+| 6 | `page.tsx` | Breakdown only updated `lastOrder` | Now uses `data.result.orderId` to update correct order |
+| 7 | `ReportsPage` | SLA compliance % used `order.status` only | Now reads from `scheduleMap` as source of truth |
+
+### Runtime Errors Fixed
+
+| Error | Cause | Fix |
+|---|---|---|
+| `Cannot read properties of undefined (reading 'ORD-1001')` | `ReportsPage` typed `scheduleMap` as `Record<string, "SAFE"\|"RISK">` but `page.tsx` stores `{ slaStatus, slaDiff }` objects | Updated `ReportsPage` prop type + all access to use `scheduleMap[id]?.slaStatus` |
+| `"Failed to load planned jobs"` on Dashboard at startup | `/api/planned-jobs` route didn't exist → fetch threw → catch fired notification | Created the route; changed catch to silent fail |
+| Planned Jobs showed nothing after scheduling | `PlannedJobsPage` called a non-existent separate `planned_jobs` table | Route now reads from `schedules` + `orders` tables |
 
 ---
 
-## 12. Running the Project
+## 14. Known Incomplete Features
 
-**Install dependencies:**
+| Feature | Location | Status |
+|---|---|---|
+| "Assign to" button | `PlannedJobsPage` | UI only, no handler |
+| Filter icon button | `PlannedJobsPage` | UI only, no handler |
+| Layout toggle (grid view) | `PlannedJobsPage` | UI only, always list view |
+| "Today" date picker | `PlannedJobsPage` | UI only, no handler |
+| Bulk action on selected jobs | `PlannedJobsPage` | Checkboxes work, no bulk operation |
+| Operator filter | `PlannedJobsPage` | Sends to API but API ignores it (no operator column) |
+| Role-based auth | Sidebar | All pages visible to all users — no login/auth yet |
+| Order status sync back to Supabase | `page.tsx` | Status updated in React state only, not PATCHed to Supabase |
+
+---
+
+## 15. Running the Project
 
 ```bash
+# Install dependencies
 npm install
-```
 
-**Run development server:**
-
-```bash
+# Run dev server
 npm run dev
-```
+# Open http://localhost:3000
 
-Open [http://localhost:3000](http://localhost:3000)
-
-**Build for production:**
-
-```bash
+# Build for production
 npm run build
 npm start
-```
 
-**Lint:**
-
-```bash
+# Lint
 npm run lint
 ```
 
 ---
 
-## 13. Deployment
+## 16. Deployment
 
-The project is pre-configured for Vercel via `vercel.json`.
-
-**Steps:**
+Pre-configured for Vercel via `vercel.json`.
 
 1. Push to GitHub
-2. Import project on [vercel.com](https://vercel.com)
+2. Import on [vercel.com](https://vercel.com)
 3. Add environment variables in Vercel dashboard:
    - `NEXT_PUBLIC_SUPABASE_URL`
    - `NEXT_PUBLIC_SUPABASE_ANON_KEY`
    - `GEMINI_API_KEY`
-4. Deploy
-
-Vercel will run `npm run build` automatically on every push to main.
+4. Deploy — Vercel runs `npm run build` on every push to main

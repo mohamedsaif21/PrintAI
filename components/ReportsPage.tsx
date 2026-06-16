@@ -4,11 +4,11 @@ import { Badge } from "@/components/ui/Badge";
 import { format } from "date-fns";
 import { PieChart, Pie, Cell, Tooltip, ResponsiveContainer, BarChart, Bar, XAxis, YAxis } from "recharts";
 
-interface Props { orders: Order[]; machines: Machine[]; schedules: Record<string, "SAFE" | "RISK"> }
+interface Props { orders: Order[]; machines: Machine[]; scheduleMap: Record<string, { slaStatus: string; slaDiff: number }> }
 
 const COLORS = ["#3b82f6", "#8b5cf6", "#f59e0b", "#10b981", "#ef4444", "#f97316"];
 
-export function ReportsPage({ orders, machines, schedules }: Props) {
+export function ReportsPage({ orders, machines, scheduleMap }: Props) {
   const statusData = ["Scheduled", "In Progress", "Completed", "Pending", "At Risk"].map((s) => ({
     name: s, value: orders.filter((o) => o.status === s).length,
   })).filter((d) => d.value > 0);
@@ -21,7 +21,7 @@ export function ReportsPage({ orders, machines, schedules }: Props) {
 
   const totalQty = orders.reduce((s, o) => s + o.quantity, 0);
   // #12 — count risk from scheduleMap (source of truth) not just order.status
-  const slaRiskCount = orders.filter((o) => schedules[o.id] === "RISK" || o.status === "At Risk").length;
+  const slaRiskCount = orders.filter((o) => scheduleMap[o.id]?.slaStatus === "RISK" || o.status === "At Risk").length;
   const completed = orders.filter((o) => o.status === "Completed").length;
 
   return (
@@ -96,7 +96,7 @@ export function ReportsPage({ orders, machines, schedules }: Props) {
               <span className="text-gray-600 dark:text-gray-400">{o.product}</span>
               <span className="text-gray-600 dark:text-gray-400">{o.quantity.toLocaleString()}</span>
               <span className="text-gray-600 dark:text-gray-400">{format(new Date(o.deadline), "h:mm a")}</span>
-              <Badge variant={schedules[o.id] === "RISK" || o.status === "At Risk" ? "risk" : "safe"}>{schedules[o.id] === "RISK" || o.status === "At Risk" ? "RISK" : "SAFE"}</Badge>
+              <Badge variant={scheduleMap[o.id]?.slaStatus === "RISK" || o.status === "At Risk" ? "risk" : "safe"}>{scheduleMap[o.id]?.slaStatus === "RISK" || o.status === "At Risk" ? "RISK" : "SAFE"}</Badge>
             </div>
           ))}
         </div>
