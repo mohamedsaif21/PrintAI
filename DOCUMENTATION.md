@@ -1,6 +1,6 @@
 # PrintAI — Full Project Documentation
 
-> Last updated after: machine queue engine, compressed demo clock, approval workflow, report export, and dedicated paper-to-machine routing
+> Last updated after: 3-pass high-priority scheduler with preemption, live machine queue engine, compressed demo clock, approval workflow, and report export.
 
 ---
 
@@ -14,6 +14,7 @@
 6. [Role Segregation](#6-role-segregation)
 7. [Architecture & Data Flow](#7-architecture--data-flow)
 8. [State Management](#8-state-management)
+9. [High Priority Scheduling](#9-high-priority-scheduling)
 9. [API Reference](#9-api-reference)
 10. [Components](#10-components)
 11. [Core Library](#11-core-library)
@@ -234,6 +235,17 @@ POST /api/schedule
                 └── Returns jobs[] + stats{}
 ```
 
+**High Priority Order Flow:**
+If `priority === "High"`, `POST /api/schedule` uses `scheduleHighPriorityOrder()` instead of `runScheduler()`.
+
+```
+                ├── Reads schedules JOIN orders from Supabase
+                ├── Maps each task in a schedule → one PlannedJob row
+                │     - stage: first task = pre-press, last = post-press, middle = press
+                │     - printing_status: RISK schedule → "Error", else "Ongoing"
+                └── Returns jobs[] + stats{}
+```
+
 **Current implementation note:** `/api/schedule` accepts the live `currentMachines` state from `OrdersPage`, normalises every machine to the dedicated paper routing, schedules onto free compatible machines first, queues behind compatible busy machines when needed, computes compressed real finish times, and returns updated machine queues to `page.tsx`. `handleScheduled()` stores those returned queues instead of only setting utilisation.
 
 ### Breakdown Simulation flow
@@ -300,6 +312,27 @@ Access pattern: `scheduleMap[orderId]?.slaStatus === "RISK"`
 > Do NOT access scheduleMap as `scheduleMap[id] === "RISK"` — it is an object, not a string. This was the cause of the `Cannot read properties of undefined` TypeError in ReportsPage.
 
 `scheduleMap[orderId]?.machines` stores a comma-separated list of assigned machine IDs for Orders and Reports.
+
+---
+## 9. High Priority Scheduling
+
+When a `High` priority order is submitted, the system uses a 3-pass "what-if" scheduler (`lib/highPriorityScheduler.ts`) to find the best way to meet the SLA without disrupting the factory floor unnecessarily.
+
+### Pass 1: Normal Scheduling
+- **Action:** Tries to append the job to the end of the queue on the fastest compatible machine.
+- **Condition:** Succeeds if the calculated finish time is before the SLA deadline.
+
+### Pass 2: Backup Machine (M5)
+- **Action:** If Pass 1 fails, it checks if the backup machine (M5) is free. If so, it routes the entire job to M5 to start immediately.
+- **Condition:** Succeeds if M5 is available (`status: "backup"`) and can meet the SLA.
+
+### Pass 3: Preemption
+- **Action:** If Pass 1 and Pass 2 fail, the system finds a machine running a `Medium` or `Low` priority job. It calculates the exact progress of the running job, pauses it, and injects the High priority job to run immediately. The remaining portion of the preempted job is re-queued with a `paused` status.
+- **Condition:** Succeeds if a preemptable machine is found.
+
+If all three passes fail (e.g., all machines are busy with other High priority jobs), the order is scheduled anyway, but the `slaStatus` is marked as `RISK`, and the AI Risk Analysis will flag it as a critical issue.
+
+A `PreemptionEvent` is generated during Pass 3, which is used to create a clear UI notification explaining which job was paused and why.
 
 ---
 
@@ -542,31 +575,16 @@ Variants: `safe`(green) `risk`(red) `warn`(amber) `info`(blue) `gray` `high`(red
 
 **Current implementation**
 - `normaliseMachine()` enforces fixed paper routing: M1 = Coated, M2 = Glossy, M3 = Matte, M4 = Uncoated, M5 = all paper types as backup.
-- `runScheduler()` picks available compatible machines first; if none are free, it queues behind compatible busy machines.
-- `dispatchScheduleToMachines()` pushes scheduled tasks onto machine queues.
-- `tickMachines()` completes compressed-time jobs, frees machines, and starts the next queued job.
+- `runScheduler()` (for Medium/Low priority) picks available compatible machines first; if none are free, it queues behind compatible busy machines.
+- `scheduleHighPriorityOrder()` (for High priority) uses the 3-pass escalation logic (Normal -> Backup -> Preempt).
 - `seedM2WithRunningJob()` starts M2 with one real demo queue job instead of a fake permanent busy state.
+- `tickMachines()` completes compressed-time jobs, frees machines, and auto-starts the next queued job. It correctly resumes `paused` jobs that were preempted.
 
 ### lib/timeEngine.ts
 
 - Compression rule: 4 factory hours = 2 real minutes.
 - 1 factory hour = 30 real seconds.
 - `computeRealFinish()` calculates the real wall-clock finish time used by live queue countdowns.
-
-**`runScheduler(order, machines)`**
-1. Filter machines: `status === "available"` AND paper type matches order
-2. Fallback: if none match paper type, use any available machine
-3. Sort by speed descending
-4. Split quantity proportionally by speed — last machine absorbs rounding remainder (ensures total = order.quantity exactly)
-5. `overallFinish` = latest task finish time
-6. `slaDiff` = deadline − overallFinish in minutes
-7. `slaStatus` = "SAFE" if diff ≥ 0, else "RISK"
-
-**`simulateBreakdown(failedMachineId, completedFraction, originalTasks, machines, order)`**
-1. Find failed task, calculate `remainingQty = assignedQty × (1 − completedFraction)`
-2. Find backup: first tries `status === "backup"`, falls back to any `available` machine
-3. Replaces failed task with new backup task
-4. Recalculates `overallFinish` and SLA
 
 ---
 
@@ -652,6 +670,7 @@ After `simulateBreakdown()`, Gemini generates a 2-sentence alert for the supervi
 | 3 | `page.tsx` | `scheduleMap` not updated after breakdown | Updated in `handleFailure` by `result.orderId` |
 | 4 | `MachinesPage` | Breakdown dropdown excluded `busy` machines | Added `busy` to filter |
 | 5 | `OrdersPage` | Quantity `< 100` only blocked by HTML, not JS | Added JS guard before fetch |
+| 6 | `gemini.ts` | AI hallucinated scheduling errors on busy machines | Prompt updated to include `jobs_in_queue` and context about queueing. |
 
 ### Edge Cases Fixed
 
@@ -664,6 +683,7 @@ After `simulateBreakdown()`, Gemini generates a 2-sentence alert for the supervi
 | 5 | `page.tsx` | `scheduleMap` lost on page refresh | Persisted to `sessionStorage`, rehydrated on mount |
 | 6 | `page.tsx` | Breakdown only updated `lastOrder` | Now uses `data.result.orderId` to update correct order |
 | 7 | `ReportsPage` | SLA compliance % used `order.status` only | Now reads from `scheduleMap` as source of truth |
+| 8 | `highPriorityScheduler.ts` | Preempted job's remaining quantity was not handled correctly | Now creates a `paused` job with the remaining quantity, which `tickMachines` resumes automatically. |
 
 ### Runtime Errors Fixed
 
