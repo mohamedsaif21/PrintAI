@@ -6,7 +6,7 @@ import { isSupabaseConfigured, supabase } from "@/lib/supabase";
 import { validateData, CreateOrderSchema } from "@/lib/validation";
 import { Machine, Order } from "@/types";
 import { v4 as uuidv4 } from "uuid";
-import { addHours, startOfDay, isBefore } from "date-fns";
+import { addHours, isBefore } from "date-fns";
 
 type MachineRow = Machine & {
   paper_types?: string[];
@@ -34,19 +34,22 @@ export async function POST(req: NextRequest) {
       ? (body.currentMachines as Machine[]).map(normaliseMachine)
       : null;
 
-    // #5 — validate all incoming fields with zod schema
+    // Validate all incoming fields with zod schema
     const validation = validateData(CreateOrderSchema, body);
     if (!validation.success) {
       return NextResponse.json({ error: validation.error }, { status: 400 });
     }
-    const { customer, product, quantity, paperType, priority, deadlineHour } = validation.data;
+    const { customer, product, quantity, paperType, priority, deadlineHours } = validation.data;
 
-    // Build deadline as today at deadlineHour
-    const deadline = addHours(startOfDay(new Date()), Number(deadlineHour));
+    // Calculate deadline as X hours from current time
+    const now = new Date();
+    const deadline = addHours(now, Number(deadlineHours));
 
-    // #1 — reject deadlines already in the past
-    if (isBefore(deadline, new Date())) {
-      return NextResponse.json({ error: `Deadline hour ${deadlineHour}:00 has already passed today. Please choose a future hour.` }, { status: 400 });
+    // Validate deadline is in the future (should always be true with positive deadlineHours)
+    if (isBefore(deadline, now)) {
+      return NextResponse.json({ 
+        error: `Invalid deadline calculation. Deadline must be in the future.` 
+      }, { status: 400 });
     }
 
     const order: Order = {

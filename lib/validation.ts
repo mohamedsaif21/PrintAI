@@ -22,7 +22,10 @@ export const CreateOrderSchema = z.object({
   quantity: z.union([z.number().positive(), z.string().transform(Number)]).refine((n) => n > 0, "Quantity must be positive"),
   paperType: z.string().min(1, "Paper type is required").max(50),
   priority: Priority,
-  deadlineHour: z.union([z.number().int().min(0).max(23), z.string().transform(Number)]),
+  deadlineHours: z.union([z.number().positive(), z.string().transform(Number)]).refine(
+    (n) => n >= 1 && n <= 72, 
+    "Deadline must be between 1 and 72 hours from now"
+  ),
 });
 
 export type CreateOrderInput = z.infer<typeof CreateOrderSchema>;

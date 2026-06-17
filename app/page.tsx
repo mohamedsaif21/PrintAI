@@ -119,6 +119,16 @@ export default function Home() {
         setOrders((prev) => prev.map((order) => (order.id === orderId ? { ...order, status: "Completed" } : order)));
         setLastOrder((prev) => (prev?.id === orderId ? { ...prev, status: "Completed" } : prev));
         pushNotif(`${orderId} completed on all assigned machines.`, "success");
+        
+        // Persist completion status to database
+        fetch("/api/orders", {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ id: orderId, status: "Completed" }),
+        }).catch((err) => {
+          console.error("Failed to persist order completion:", err);
+          pushNotif(`Warning: ${orderId} completion not saved to database`, "warn");
+        });
       });
     }, TICK_INTERVAL_MS);
 

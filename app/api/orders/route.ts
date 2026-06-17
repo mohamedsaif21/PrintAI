@@ -39,15 +39,13 @@ export async function GET() {
 
     if (error) throw error;
     return NextResponse.json({ orders: ((data || []) as OrderRow[]).map(toOrder) });
-  } catch {
-    // Return seed data if Supabase not set up
-    return NextResponse.json({
-      orders: [
-        { id: "ORD-1001", customer: "PrintCo Ltd",   product: "Brochure",      quantity: 10000, paperType: "Coated",  priority: "High",   deadline: new Date(new Date().setHours(18,0,0,0)).toISOString(), status: "Pending Approval", createdAt: new Date().toISOString() },
-        { id: "ORD-1002", customer: "Bright Media",  product: "Flyer",         quantity: 8000,  paperType: "Glossy",  priority: "Medium", deadline: new Date(new Date().setHours(20,0,0,0)).toISOString(), status: "Scheduled",   createdAt: new Date().toISOString() },
-        { id: "ORD-1003", customer: "Vega Corp",     product: "Annual Report", quantity: 5000,  paperType: "Matte",   priority: "High",   deadline: new Date(new Date().setHours(17,0,0,0)).toISOString(), status: "In Progress", createdAt: new Date().toISOString() },
-        { id: "ORD-1004", customer: "Acme Retail",   product: "Catalogue",     quantity: 10000, paperType: "Coated",  priority: "Low",    deadline: new Date(new Date().setHours(21,0,0,0)).toISOString(), status: "Pending",     createdAt: new Date().toISOString() },
-      ],
+  } catch (error: unknown) {
+    console.error("Failed to fetch orders from database:", error);
+    // Return empty array - no seed data fallback
+    // This forces proper Supabase configuration
+    return NextResponse.json({ 
+      orders: [],
+      message: "No orders found. Create your first order to get started."
     });
   }
 }

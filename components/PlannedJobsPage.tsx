@@ -271,7 +271,16 @@ export function PlannedJobsPage({ addNotification }: Props) {
               {loading ? (
                 <tr><td colSpan={14} className="py-12 text-center text-gray-500"><Loader2 className="w-6 h-6 animate-spin mx-auto" /></td></tr>
               ) : paginatedJobs.length === 0 ? (
-                <tr><td colSpan={14} className="py-12 text-center text-gray-500">No jobs found</td></tr>
+                <tr>
+                  <td colSpan={14} className="py-12 text-center">
+                    <div className="flex flex-col items-center gap-2">
+                      <p className="text-sm text-gray-500 dark:text-gray-400">No scheduled jobs yet</p>
+                      <p className="text-xs text-gray-400 dark:text-gray-500">
+                        Create an order from the Orders page to see planned jobs here.
+                      </p>
+                    </div>
+                  </td>
+                </tr>
               ) : (
                 paginatedJobs.map((job) => (
                   <tr key={job.id} className="hover:bg-gray-50 dark:hover:bg-gray-800/40 transition-colors group">

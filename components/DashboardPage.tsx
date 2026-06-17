@@ -33,6 +33,16 @@ export function DashboardPage({ orders, machines, lastSchedule, notifications }:
 
   return (
     <div className="space-y-5">
+      {/* Welcome message for new users */}
+      {orders.length === 0 && (
+        <div className="bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-800 rounded-lg p-4 text-center">
+          <p className="text-sm text-blue-700 dark:text-blue-300 font-medium">Welcome to PrintAI!</p>
+          <p className="text-xs text-blue-600 dark:text-blue-400 mt-1">
+            No orders yet. Go to the Orders page to create your first order and see the AI scheduling in action.
+          </p>
+        </div>
+      )}
+
       <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
         <MetricCard label="Total orders" value={orders.length} sub={`${scheduled} active`} icon={FileText} color="bg-blue-500" />
         <MetricCard label="Active machines" value={active} sub={`${machines.filter(m=>m.status==='busy').length} busy · ${machines.filter(m=>m.status==='backup').length} backup`} icon={Cpu} color="bg-violet-500" />

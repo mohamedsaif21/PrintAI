@@ -58,7 +58,7 @@ export function OrdersPage({ orders, machines, scheduleMap, onScheduled, addNoti
   const [error, setError] = useState("");
   const [form, setForm] = useState({
     customer: "", product: "Brochure", quantity: "10000",
-    paperType: "Coated", priority: "High", deadlineHour: "18",
+    paperType: "Coated", priority: "High", deadlineHours: "8",
   });
 
   // ── Tracker state ────────────────────────────────────────────────────────
@@ -99,8 +99,11 @@ export function OrdersPage({ orders, machines, scheduleMap, onScheduled, addNoti
     e.preventDefault();
     if (!form.customer.trim()) { setError("Customer name is required."); return; }
     if (Number(form.quantity) < 100) { setError("Quantity must be at least 100 sheets."); return; }
-    if (Number(form.deadlineHour) <= new Date().getHours()) {
-      setError(`Deadline hour ${form.deadlineHour}:00 has already passed. Choose a later hour.`); return;
+    if (Number(form.deadlineHours) < 1) {
+      setError("Deadline must be at least 1 hour from now."); return;
+    }
+    if (Number(form.deadlineHours) > 72) {
+      setError("Deadline cannot be more than 72 hours (3 days) from now."); return;
     }
     setError(""); setLoading(true);
     try {
@@ -110,7 +113,7 @@ export function OrdersPage({ orders, machines, scheduleMap, onScheduled, addNoti
         body: JSON.stringify({
           ...form,
           quantity: Number(form.quantity),
-          deadlineHour: Number(form.deadlineHour),
+          deadlineHours: Number(form.deadlineHours),
           currentMachines: machines,
         }),
       });
@@ -129,7 +132,7 @@ export function OrdersPage({ orders, machines, scheduleMap, onScheduled, addNoti
       }
       
       onScheduled(data.order, data.schedule, data.machines, data.preemptionEvents || []);
-      setForm({ customer: "", product: "Brochure", quantity: "10000", paperType: "Coated", priority: "High", deadlineHour: "18" });
+      setForm({ customer: "", product: "Brochure", quantity: "10000", paperType: "Coated", priority: "High", deadlineHours: "8" });
     } catch (err: unknown) {
       setError(err instanceof Error ? err.message : "Failed to schedule order");
     } finally {
@@ -274,9 +277,20 @@ export function OrdersPage({ orders, machines, scheduleMap, onScheduled, addNoti
               </select>
             </div>
             <div>
-              <label className="block text-xs text-gray-500 dark:text-gray-400 mb-1">Deadline (hour, 8–22)</label>
-              <input type="number" min="8" max="22" value={form.deadlineHour} onChange={e => set("deadlineHour", e.target.value)}
+              <label className="block text-xs text-gray-500 dark:text-gray-400 mb-1">Deadline (hours from now)</label>
+              <input type="number" min="1" max="72" value={form.deadlineHours} onChange={e => set("deadlineHours", e.target.value)}
+                placeholder="e.g. 8"
                 className="w-full px-3 py-2 text-sm border border-gray-300 dark:border-gray-700 rounded-lg bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100 focus:outline-none focus:ring-2 focus:ring-blue-500" />
+              <p className="text-xs text-gray-400 mt-1">
+                {form.deadlineHours && Number(form.deadlineHours) > 0
+                  ? `Due: ${new Date(Date.now() + Number(form.deadlineHours) * 60 * 60 * 1000).toLocaleString([], { 
+                      month: 'short', 
+                      day: 'numeric', 
+                      hour: '2-digit', 
+                      minute: '2-digit' 
+                    })}`
+                  : "Enter hours to see deadline"}
+              </p>
             </div>
           </div>
           {error && <p className="text-xs text-red-600 dark:text-red-400">{error}</p>}
