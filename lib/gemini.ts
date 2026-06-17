@@ -21,7 +21,8 @@ function getModel() {
 
 export async function generateScheduleExplanation(
   order: Order,
-  result: ScheduleResult
+  result: ScheduleResult,
+  warnings: string[] = []
 ): Promise<string> {
   try {
     const model = getModel();
@@ -34,20 +35,28 @@ export async function generateScheduleExplanation(
       )
       .join("; ");
 
-    const prompt = `You are an AI production planning assistant for a printing factory. Explain the following scheduling decision in 2-3 clear, concise sentences for a production supervisor.
+    const warningContext = warnings.length > 0
+      ? `\nSystem Actions: ${warnings.join(". ")}.\nState these exact actions factually.`
+      : "";
 
-Order: ${order.quantity.toLocaleString()} ${order.product} for ${order.customer}, paper: ${order.paperType}, priority: ${order.priority}, deadline: ${new Date(order.deadline).toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit" })}.
-Machine assignments: ${taskSummary}.
-Overall estimated finish: ${new Date(result.overallFinish).toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit" })}.
-SLA status: ${result.slaStatus} (${Math.abs(result.slaDiff)} minutes ${result.slaDiff >= 0 ? "ahead of" : "behind"} deadline).
+    const prompt = `Provide a strictly factual, concise summary of this scheduling decision. No conversational filler.
 
-Explain WHY these machines were chosen and what the SLA status means. Keep it under 60 words.`;
+Order: ${order.quantity.toLocaleString()} ${order.product}, Priority: ${order.priority}.
+Assignments: ${taskSummary}.
+Estimated Finish: ${new Date(result.overallFinish).toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit" })}.
+SLA: ${result.slaStatus} (${Math.abs(result.slaDiff)}m ${result.slaDiff >= 0 ? "buffer" : "late"}).${warningContext}
+
+State exactly:
+1. Machine(s) assigned.
+2. Estimated completion time and SLA status.
+3. Exact actions taken (e.g., queued normally, paused medium job, routed to backup).
+Keep it to 2-3 direct sentences.`;
 
     const response = await model.generateContent(prompt);
     return response.response.text();
   } catch (error) {
     console.error("Gemini error:", error);
-    return `Work was split across ${result.tasks.length} machines proportionally by speed. The fastest machines received the largest share to minimise completion time. Estimated finish is ${Math.abs(result.slaDiff)} minutes ${result.slaDiff >= 0 ? "ahead of" : "behind"} the deadline — SLA is ${result.slaStatus}.`;
+    return `Assigned to ${result.tasks.length} machine(s). Estimated finish: ${Math.abs(result.slaDiff)}m ${result.slaDiff >= 0 ? "ahead of" : "behind"} deadline (SLA ${result.slaStatus}).`;
   }
 }
 
@@ -68,7 +77,7 @@ export async function analyseRisk(
     if (!model) return fallback;
 
     const machineSummary = machines
-      .map((m) => `${m.id}: status=${m.status}, speed=${m.speed}, utilisation=${m.utilisation}%, paperTypes=${m.paperTypes.join("/")}`)
+      .map((m) => `${m.id}: status=${m.status}, speed=${m.speed}, jobs_in_queue=${m.queue.length}, paperTypes=${m.paperTypes.join("/")}`)
       .join("\n");
 
     const taskSummary = schedule.tasks
@@ -80,6 +89,7 @@ export async function analyseRisk(
 Order: ${order.quantity.toLocaleString()} ${order.product} for ${order.customer}, paper: ${order.paperType}, priority: ${order.priority}, deadline: ${new Date(order.deadline).toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit" })}.
 Schedule: ${taskSummary}. Overall finish: ${new Date(schedule.overallFinish).toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit" })}. SLA: ${schedule.slaStatus} (${Math.abs(schedule.slaDiff)} min ${schedule.slaDiff >= 0 ? "ahead" : "behind"}).
 Machines:\n${machineSummary}
+*Context: A 'busy' status means the machine is running. New orders are safely queued behind existing jobs if the SLA allows.*
 
 Return exactly this JSON:
 {
