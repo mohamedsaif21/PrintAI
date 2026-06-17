@@ -13,6 +13,24 @@ export interface QueuedJob {
   status: "queued" | "running" | "paused" | "completed";
 }
 
+export interface DowntimeLog {
+  date: string;
+  start: string;
+  end?: string;
+  duration: string;
+  reason: string;
+  action: string;
+  loggedBy: string;
+  impact: string;
+}
+
+export interface MachineStateLog {
+  timestamp: string;
+  status: MachineStatus;
+  orderId?: string;
+  reason?: string;
+}
+
 export interface Machine {
   id: string;
   speed: number; // sheets/hour
@@ -22,6 +40,9 @@ export interface Machine {
   utilisation: number; // 0-100
   assignedOrderId?: string;
   queue: QueuedJob[]; // jobs waiting/running on this machine, in order
+  downtimeLogs?: DowntimeLog[]; // persistent breakdown/maintenance history
+  stateHistory?: MachineStateLog[]; // state changes for runtime overview
+  shiftStartTime?: string; // when the current shift started
 }
 
 export type Priority = "High" | "Medium" | "Low";

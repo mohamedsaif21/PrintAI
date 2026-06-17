@@ -281,24 +281,232 @@ function MachineDetail({
   lastSchedule: ScheduleResult | null;
   onBack: () => void;
 }) {
-  const [tab, setTab] = useState<DetailTab>("Downtime & Maintenance Logs");
+  const [tab, setTab] = useState<DetailTab>("Machine Details");
+  const [currentTime, setCurrentTime] = useState(new Date());
+  
+  useEffect(() => {
+    const interval = setInterval(() => setCurrentTime(new Date()), 30000); // Update every 30s
+    return () => clearInterval(interval);
+  }, []);
+  
   const extra = MACHINE_EXTRA[machine.id] || MACHINE_EXTRA.M4;
   const statusStyle = STATUS_STYLES[machine.status] || STATUS_STYLES.available;
   const activeTask = lastSchedule?.tasks.find((task) => task.machineId === machine.id);
   const isWorking = machine.status === "busy" && Boolean(activeTask);
   const jobProgress = isWorking ? machine.utilisation : machine.status === "available" ? 0 : Math.min(100, machine.utilisation);
   const activeOrderId = activeTask ? lastSchedule?.orderId : machine.assignedOrderId;
-  const dynamicJobHistory = activeTask
-    ? [
-        {
-          date: new Date().toLocaleDateString(),
-          job: `Order ${activeOrderId || "Active"}`,
-          qty: activeTask.assignedQty,
-          status: "In Progress",
-        },
-        ...extra.jobHistory.filter((job) => job.status !== "In Progress"),
-      ]
-    : extra.jobHistory;
+  
+  // Build dynamic job history from machine queue and past static data
+  const dynamicJobHistory = [
+    ...machine.queue
+      .filter((job) => job.status === "running" || job.status === "completed")
+      .map((job) => ({
+        date: new Date(job.startedAt).toLocaleDateString(),
+        job: `Order ${job.orderId}`,
+        qty: job.assignedQty,
+        status: job.status === "completed" ? "Completed" : "In Progress",
+      })),
+    ...extra.jobHistory.filter(
+      (staticJob) => 
+        !machine.queue.some(
+          (qJob) => 
+            staticJob.job.includes(qJob.orderId) && 
+            staticJob.status === (qJob.status === "completed" ? "Completed" : "In Progress")
+        )
+    ),
+  ];
+  
+  // Merge machine's persistent downtime logs with static fallback data
+  const dynamicDowntimeLogs = [
+    ...(machine.downtimeLogs || []),
+    ...extra.downtimeLogs.filter(
+      (staticLog) => 
+        !(machine.downtimeLogs || []).some(
+          (persistedLog) => 
+            persistedLog.date === staticLog.date && 
+            persistedLog.start === staticLog.start
+        )
+    ),
+  ];
+  
+  // Build dynamic runtime segments based on actual machine state history
+  const buildRuntimeSegments = () => {
+    const shiftStart = machine.shiftStartTime ? new Date(machine.shiftStartTime) : shiftStartTime;
+    const shiftEnd = currentTime;
+    const shiftDurationMs = shiftEnd.getTime() - shiftStart.getTime();
+    
+    // If no state history or too short, show current state
+    if (!machine.stateHistory || machine.stateHistory.length === 0 || shiftDurationMs < 60000) {
+      const runningJob = machine.queue.find((job) => job.status === "running");
+      
+      if (machine.status === "breakdown") {
+        return [{ color: "#ef4444", pct: 100, label: "Stopped Unexpectedly" }];
+      }
+      if (machine.status === "backup") {
+        return [{ color: "#d1d5db", pct: 100, label: "Idle - Backup Standby" }];
+      }
+      if (machine.status === "available" && machine.queue.length === 0) {
+        return [{ color: "#3b82f6", pct: 100, label: "Idle" }];
+      }
+      if (machine.status === "busy" && runningJob) {
+        const startMs = new Date(runningJob.startedAt).getTime();
+        const finishMs = new Date(runningJob.realFinishAt).getTime();
+        const nowMs = Date.now();
+        const totalDuration = finishMs - startMs;
+        const elapsed = Math.max(0, nowMs - startMs);
+        const progress = Math.min(100, (elapsed / totalDuration) * 100);
+        
+        return [
+          { color: "#22c55e", pct: Math.round(progress), label: "Operating Normally" },
+          { color: "#d1d5db", pct: Math.round(100 - progress), label: "Remaining Time" },
+        ].filter((s) => s.pct > 0);
+      }
+      return [{ color: "#3b82f6", pct: 100, label: "Idle" }];
+    }
+    
+    // Build segments from state history
+    const segments: { color: string; pct: number; label: string; startMs: number; endMs: number }[] = [];
+    const history = [...machine.stateHistory].sort((a, b) => 
+      new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime()
+    );
+    
+    // Start with initial state at shift start
+    let lastTimestamp = shiftStart.getTime();
+    
+    history.forEach((log, index) => {
+      const logTime = new Date(log.timestamp).getTime();
+      
+      // Don't process logs before shift start
+      if (logTime < shiftStart.getTime()) return;
+      
+      const durationMs = logTime - lastTimestamp;
+      if (durationMs > 0) {
+        // Add segment for the previous state
+        const prevLog = index > 0 ? history[index - 1] : null;
+        const prevStatus = prevLog?.status || "available";
+        
+        let color = "#3b82f6"; // Idle
+        let label = "Idle";
+        
+        if (prevStatus === "busy") {
+          color = "#22c55e";
+          label = prevLog?.orderId ? `Running ${prevLog.orderId}` : "Operating Normally";
+        } else if (prevStatus === "breakdown") {
+          color = "#ef4444";
+          label = "Stopped Unexpectedly";
+        } else if (prevStatus === "backup") {
+          color = "#d1d5db";
+          label = "Standby";
+        }
+        
+        segments.push({
+          color,
+          pct: 0,
+          label,
+          startMs: lastTimestamp,
+          endMs: logTime,
+        });
+      }
+      
+      lastTimestamp = logTime;
+    });
+    
+    // Add current state from last log to now
+    const currentMs = shiftEnd.getTime();
+    if (currentMs > lastTimestamp) {
+      const lastLog = history[history.length - 1];
+      const currentStatus = lastLog?.status || machine.status;
+      
+      let color = "#3b82f6";
+      let label = "Idle";
+      
+      if (currentStatus === "busy") {
+        const runningJob = machine.queue.find((job) => job.status === "running");
+        if (runningJob) {
+          const jobStartMs = new Date(runningJob.startedAt).getTime();
+          const jobFinishMs = new Date(runningJob.realFinishAt).getTime();
+          const jobDuration = jobFinishMs - jobStartMs;
+          const elapsed = Math.max(0, currentMs - jobStartMs);
+          const progress = Math.min(1, elapsed / jobDuration);
+          
+          // Split busy period into completed and remaining
+          const busyDuration = currentMs - lastTimestamp;
+          const completedDuration = busyDuration * progress;
+          const remainingDuration = busyDuration * (1 - progress);
+          
+          if (completedDuration > 0) {
+            segments.push({
+              color: "#22c55e",
+              pct: 0,
+              label: runningJob.orderId ? `Running ${runningJob.orderId}` : "Operating Normally",
+              startMs: lastTimestamp,
+              endMs: lastTimestamp + completedDuration,
+            });
+          }
+          
+          if (remainingDuration > 0) {
+            segments.push({
+              color: "#d1d5db",
+              pct: 0,
+              label: "Remaining Time",
+              startMs: lastTimestamp + completedDuration,
+              endMs: currentMs,
+            });
+          }
+        } else {
+          color = "#22c55e";
+          label = lastLog?.orderId ? `Running ${lastLog.orderId}` : "Operating Normally";
+          segments.push({ color, pct: 0, label, startMs: lastTimestamp, endMs: currentMs });
+        }
+      } else if (currentStatus === "breakdown") {
+        segments.push({
+          color: "#ef4444",
+          pct: 0,
+          label: "Stopped Unexpectedly",
+          startMs: lastTimestamp,
+          endMs: currentMs,
+        });
+      } else if (currentStatus === "backup") {
+        segments.push({
+          color: "#d1d5db",
+          pct: 0,
+          label: "Standby",
+          startMs: lastTimestamp,
+          endMs: currentMs,
+        });
+      } else {
+        segments.push({
+          color: "#3b82f6",
+          pct: 0,
+          label: "Idle",
+          startMs: lastTimestamp,
+          endMs: currentMs,
+        });
+      }
+    }
+    
+    // Calculate percentages
+    segments.forEach((seg) => {
+      const duration = seg.endMs - seg.startMs;
+      seg.pct = Math.max(1, Math.round((duration / shiftDurationMs) * 100));
+    });
+    
+    // Normalize to 100%
+    const totalPct = segments.reduce((sum, seg) => sum + seg.pct, 0);
+    if (totalPct !== 100 && segments.length > 0) {
+      const diff = 100 - totalPct;
+      segments[segments.length - 1].pct += diff;
+    }
+    
+    return segments.filter((s) => s.pct > 0).map(({ color, pct, label }) => ({ color, pct, label }));
+  };
+  
+  const dynamicRuntimeSegments = buildRuntimeSegments();
+  
+  // Calculate shift time range (current time - 5 hours to current time)
+  const shiftEndTime = currentTime;
+  const shiftStartTime = new Date(currentTime.getTime() - 5 * 60 * 60 * 1000);
+  const formatTime = (date: Date) => date.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", hour12: false });
 
   return (
     <div className="space-y-4">
@@ -372,6 +580,11 @@ function MachineDetail({
         <h3 className="text-sm font-semibold text-gray-900 dark:text-gray-100 mb-1">Machine Runtime Overview</h3>
         <p className="text-xs text-gray-500 mb-3">
           Current Shift Duration: <span className="font-semibold text-gray-900 dark:text-gray-100">5 Hrs 00 Mins</span>
+          {machine.status === "busy" && machine.queue[0] && (
+            <span className="ml-3">
+              Active Job: <span className="font-semibold text-emerald-600">Order {machine.queue[0].orderId}</span>
+            </span>
+          )}
         </p>
         <div className="flex items-center gap-4 mb-3 flex-wrap">
           {[
@@ -379,6 +592,7 @@ function MachineDetail({
             { color: "#ef4444", label: "Stopped Unexpectedly" },
             { color: "#a855f7", label: "Planned Stop" },
             { color: "#3b82f6", label: "Idle" },
+            { color: "#d1d5db", label: "Remaining Time" },
           ].map((legend) => (
             <div key={legend.label} className="flex items-center gap-1.5">
               <span className="w-3 h-3 rounded-sm flex-shrink-0" style={{ background: legend.color }} />
@@ -387,12 +601,23 @@ function MachineDetail({
           ))}
         </div>
         <div className="flex h-8 rounded-lg overflow-hidden w-full">
-          {extra.runtimeSegments.map((segment, index) => (
-            <div key={index} title={segment.label} style={{ width: `${segment.pct}%`, background: segment.color }} />
+          {dynamicRuntimeSegments.map((segment, index) => (
+            <div 
+              key={index} 
+              title={`${segment.label} (${segment.pct}%)`} 
+              style={{ width: `${segment.pct}%`, background: segment.color }} 
+              className="transition-all duration-500"
+            />
           ))}
         </div>
         <div className="flex justify-between text-xs text-gray-400 mt-1">
-          <span>9:00</span><span>13:00</span>
+          <span>{formatTime(shiftStartTime)}</span>
+          <span className="text-gray-600 dark:text-gray-300 font-medium">
+            {machine.status === "busy" ? "In Progress" : 
+             machine.status === "breakdown" ? "Breakdown" : 
+             machine.status === "backup" ? "Standby" : "Idle"}
+          </span>
+          <span>{formatTime(shiftEndTime)}</span>
         </div>
       </div>
 
@@ -435,7 +660,7 @@ function MachineDetail({
                   <div className="grid grid-cols-4 text-xs font-medium text-gray-400 uppercase pb-2">
                     <span>Date</span><span>Job</span><span>Qty</span><span>Status</span>
                   </div>
-                  {dynamicJobHistory.map((job, index) => (
+                  {dynamicJobHistory.slice(0, 10).map((job, index) => (
                     <div key={index} className="grid grid-cols-4 py-2.5 text-sm">
                       <span className="text-gray-500">{job.date}</span>
                       <span className="text-gray-800 dark:text-gray-200">{job.job}</span>
@@ -443,6 +668,19 @@ function MachineDetail({
                       <span className={`text-xs font-medium ${job.status === "Completed" ? "text-emerald-600" : "text-amber-600"}`}>{job.status}</span>
                     </div>
                   ))}
+                  {machine.queue.filter((job) => job.status === "queued").length > 0 && (
+                    <div className="pt-3 mt-3 border-t border-gray-200 dark:border-gray-700">
+                      <p className="text-xs font-medium text-gray-500 uppercase mb-2">Queued Jobs</p>
+                      {machine.queue.filter((job) => job.status === "queued").map((job, index) => (
+                        <div key={`queued-${index}`} className="grid grid-cols-4 py-2 text-sm">
+                          <span className="text-gray-500">Pending</span>
+                          <span className="text-gray-800 dark:text-gray-200">Order {job.orderId}</span>
+                          <span className="text-gray-600 dark:text-gray-400">{job.assignedQty.toLocaleString()}</span>
+                          <span className="text-xs font-medium text-blue-600">Queued</span>
+                        </div>
+                      ))}
+                    </div>
+                  )}
                 </div>
           )}
 
@@ -450,10 +688,22 @@ function MachineDetail({
             <div>
               <div className="grid grid-cols-1 md:grid-cols-4 gap-4 mb-5">
                 {[
-                  { label: "Total Downtime", value: "6 hr 45 Mins" },
-                  { label: "Scheduled Maintenance events", value: "2" },
-                  { label: "Unscheduled Breakdowns", value: "3" },
-                  { label: "Average Downtime Per Event", value: "1 hr 7 min" },
+                  { 
+                    label: "Total Downtime", 
+                    value: machine.status === "breakdown" ? "Ongoing" : dynamicDowntimeLogs.length > 0 ? "6 hr 45 Mins" : "0 hr" 
+                  },
+                  { 
+                    label: "Scheduled Maintenance events", 
+                    value: dynamicDowntimeLogs.filter((log) => log.reason.toLowerCase().includes("maintenance") || log.reason.toLowerCase().includes("scheduled")).length.toString() 
+                  },
+                  { 
+                    label: "Unscheduled Breakdowns", 
+                    value: dynamicDowntimeLogs.filter((log) => !log.reason.toLowerCase().includes("maintenance") && !log.reason.toLowerCase().includes("scheduled")).length.toString() 
+                  },
+                  { 
+                    label: "Average Downtime Per Event", 
+                    value: dynamicDowntimeLogs.length > 0 ? "1 hr 7 min" : "N/A" 
+                  },
                 ].map((stat) => (
                   <div key={stat.label} className="bg-gray-50 dark:bg-gray-800 rounded-lg p-3">
                     <p className="text-xs text-gray-400 mb-1">{stat.label}</p>
@@ -461,8 +711,8 @@ function MachineDetail({
                   </div>
                 ))}
               </div>
-              {extra.downtimeLogs.length === 0 ? (
-                <p className="text-sm text-gray-400 text-center py-4">No downtime logs.</p>
+              {dynamicDowntimeLogs.length === 0 ? (
+                <p className="text-sm text-gray-400 text-center py-4">No downtime logs recorded.</p>
               ) : (
                 <div className="overflow-x-auto">
                   <table className="w-full text-sm">
@@ -474,11 +724,11 @@ function MachineDetail({
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-gray-100 dark:divide-gray-800">
-                      {extra.downtimeLogs.map((log, index) => (
-                        <tr key={index}>
+                      {dynamicDowntimeLogs.map((log, index) => (
+                        <tr key={index} className={log.duration === "Ongoing" ? "bg-red-50 dark:bg-red-900/10" : ""}>
                           <td className="py-2.5 pr-4 text-gray-500 whitespace-nowrap">{log.date}</td>
                           <td className="py-2.5 pr-4 text-gray-500 whitespace-nowrap">{log.start}</td>
-                          <td className="py-2.5 pr-4 text-gray-700 dark:text-gray-300 whitespace-nowrap">{log.duration}</td>
+                          <td className={`py-2.5 pr-4 whitespace-nowrap font-medium ${log.duration === "Ongoing" ? "text-red-600 dark:text-red-400" : "text-gray-700 dark:text-gray-300"}`}>{log.duration}</td>
                           <td className="py-2.5 pr-4 text-gray-700 dark:text-gray-300">{log.reason}</td>
                           <td className="py-2.5 pr-4 text-gray-700 dark:text-gray-300">{log.action}</td>
                           <td className="py-2.5 pr-4 text-gray-500">{log.loggedBy}</td>

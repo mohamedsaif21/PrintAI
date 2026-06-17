@@ -116,6 +116,18 @@ export function OrdersPage({ orders, machines, scheduleMap, onScheduled, addNoti
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error);
+      
+      // Show What-If warnings if present (for High Priority orders)
+      if (data.whatIfWarnings && Array.isArray(data.whatIfWarnings)) {
+        data.whatIfWarnings.forEach((warning: string) => {
+          if (warning.includes("Pass 1") || warning.includes("Pass 2") || warning.includes("Pass 3")) {
+            addNotification(warning, "info");
+          } else if (warning.includes("WARNING") || warning.includes("breach")) {
+            addNotification(warning, "warn");
+          }
+        });
+      }
+      
       onScheduled(data.order, data.schedule, data.machines, data.preemptionEvents || []);
       setForm({ customer: "", product: "Brochure", quantity: "10000", paperType: "Coated", priority: "High", deadlineHour: "18" });
     } catch (err: unknown) {

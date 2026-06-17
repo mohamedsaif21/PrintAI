@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { dispatchScheduleToMachines, runScheduler, DEFAULT_MACHINES, normaliseMachine } from "@/lib/scheduler";
+import { scheduleHighPriorityOrder } from "@/lib/highPriorityScheduler";
 import { generateScheduleExplanation, analyseRisk } from "@/lib/gemini";
 import { isSupabaseConfigured, supabase } from "@/lib/supabase";
 import { validateData, CreateOrderSchema } from "@/lib/validation";
@@ -69,6 +70,76 @@ export async function POST(req: NextRequest) {
       // use defaults if Supabase not configured
     }
 
+    // ═══════════════════════════════════════════════════════════════════════
+    // HIGH PRIORITY SCHEDULER: 3-Pass What-If Analysis
+    // ═══════════════════════════════════════════════════════════════════════
+    if (priority === "High") {
+      const whatIfResult = scheduleHighPriorityOrder(order, machines);
+      
+      if (!whatIfResult.success) {
+        // All 3 passes failed - return error with warnings
+        return NextResponse.json({ 
+          error: `Unable to schedule High Priority order. Attempts: ${whatIfResult.warnings.join(" | ")}` 
+        }, { status: 400 });
+      }
+
+      // Success! Use the result from the successful pass
+      const result = whatIfResult.scheduleResult!;
+      const updatedMachines = whatIfResult.updatedMachines!;
+      const preemptionEvents = whatIfResult.preemptionEvents;
+
+      // Generate AI explanation
+      const explanation = await generateScheduleExplanation(order, result);
+      result.explanation = explanation;
+
+      // Add pass info to explanation
+      const passInfo = `\n\n[Pass ${whatIfResult.passUsed} used: ${whatIfResult.warnings[whatIfResult.warnings.length - 1]}]`;
+      result.explanation = (result.explanation || "") + passInfo;
+
+      // Run risk analysis
+      result.risk = await analyseRisk(order, machines, result);
+
+      // Save to Supabase
+      if (isSupabaseConfigured()) {
+        try {
+          await supabase.from("orders").insert({
+            id: order.id,
+            customer: order.customer,
+            product: order.product,
+            quantity: order.quantity,
+            paper_type: order.paperType,
+            priority: order.priority,
+            deadline: order.deadline,
+            status: order.status,
+            created_at: order.createdAt,
+          });
+
+          await supabase.from("schedules").insert({
+            order_id: order.id,
+            tasks: result.tasks,
+            overall_finish: result.overallFinish,
+            sla_status: result.slaStatus,
+            sla_diff: result.slaDiff,
+            explanation: result.explanation,
+            created_at: new Date().toISOString(),
+          });
+        } catch (dbError) {
+          console.error("Failed to persist order/schedule to database:", dbError);
+        }
+      }
+
+      return NextResponse.json({ 
+        order, 
+        schedule: result, 
+        machines: updatedMachines, 
+        preemptionEvents,
+        whatIfWarnings: whatIfResult.warnings,
+      });
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════
+    // NORMAL SCHEDULER: For Medium and Low Priority orders
+    // ═══════════════════════════════════════════════════════════════════════
     // Run rule-based scheduler against the live machine queue/status state.
     const result = runScheduler(order, machines);
 

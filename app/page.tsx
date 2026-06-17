@@ -87,7 +87,25 @@ export default function Home() {
         )
       );
 
-      setMachines(updatedMachines);
+      // Track state changes when jobs complete
+      const machinesWithStateUpdate = updatedMachines.map((m) => {
+        const completed = justCompleted.find((c) => c.machineId === m.id);
+        if (!completed) return m;
+        
+        const stateLog = {
+          timestamp: new Date().toISOString(),
+          status: m.status,
+          orderId: completed.orderId,
+          reason: `Job ${completed.orderId} completed`,
+        };
+        
+        return {
+          ...m,
+          stateHistory: [...(m.stateHistory || []), stateLog],
+        };
+      });
+
+      setMachines(machinesWithStateUpdate);
       Object.entries(completedByOrder).forEach(([orderId, machineIds]) => {
         if (orderId === "ORD-SEED-M2") {
           pushNotif(`M2 seed job completed - machine is now available.`, "success");
@@ -112,7 +130,27 @@ export default function Home() {
     setLastSchedule(schedule);
     setLastOrder(order);
     const nextMachines = updatedMachines?.map(normaliseMachine) || machinesFromSchedule(machines, order, schedule);
-    setMachines(nextMachines);
+    
+    // Track state changes for machines involved in this schedule
+    const machinesWithHistory = nextMachines.map((m) => {
+      const task = schedule.tasks.find((t) => t.machineId === m.id);
+      if (!task) return m;
+      
+      const stateLog = {
+        timestamp: new Date().toISOString(),
+        status: "busy" as const,
+        orderId: order.id,
+        reason: "Order scheduled",
+      };
+      
+      return {
+        ...m,
+        stateHistory: [...(m.stateHistory || []), stateLog],
+      };
+    });
+    
+    setMachines(machinesWithHistory);
+    
     schedule.tasks.forEach((task) => {
       const machine = machines.find((item) => item.id === task.machineId);
       fetch("/api/machines", {
@@ -162,12 +200,48 @@ export default function Home() {
   }
 
   function handleFailure(data: { newTasks: ScheduledTask[]; result: ScheduleResult; failedMachineId: string; backupMachineId: string; remainingQty: number }) {
+    const breakdownTimestamp = new Date();
     setMachines((prev) =>
       prev.map((m) => {
-        if (m.id === data.failedMachineId) return { ...m, status: "breakdown", utilisation: 0, assignedOrderId: undefined, queue: [] };
+        if (m.id === data.failedMachineId) {
+          const newLog = {
+            date: breakdownTimestamp.toLocaleDateString(),
+            start: breakdownTimestamp.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
+            duration: "Ongoing",
+            reason: "Simulated breakdown",
+            action: "Pending resolution",
+            loggedBy: "System",
+            impact: m.assignedOrderId || "N/A",
+          };
+          
+          const stateLog = {
+            timestamp: breakdownTimestamp.toISOString(),
+            status: "breakdown" as const,
+            orderId: m.assignedOrderId,
+            reason: "Machine breakdown",
+          };
+          
+          return { 
+            ...m, 
+            status: "breakdown", 
+            utilisation: 0, 
+            assignedOrderId: undefined, 
+            queue: [],
+            downtimeLogs: [newLog, ...(m.downtimeLogs || [])],
+            stateHistory: [...(m.stateHistory || []), stateLog],
+          };
+        }
         if (m.id === data.backupMachineId) {
           const task = data.newTasks.find((item) => item.machineId === m.id);
           if (!task) return { ...m, status: "busy", utilisation: 50 };
+          
+          const stateLog = {
+            timestamp: new Date().toISOString(),
+            status: "busy" as const,
+            orderId: data.result.orderId,
+            reason: "Backup assignment",
+          };
+          
           return {
             ...m,
             status: "busy",
@@ -187,6 +261,7 @@ export default function Home() {
                 status: "running",
               },
             ],
+            stateHistory: [...(m.stateHistory || []), stateLog],
           };
         }
         return m;
@@ -211,7 +286,43 @@ export default function Home() {
   }
 
   function handleReset() {
-    setMachines(seedM2WithRunningJob(DEFAULT_MACHINES));
+    setMachines((prev) => 
+      seedM2WithRunningJob(DEFAULT_MACHINES).map((defaultMachine) => {
+        const existing = prev.find((m) => m.id === defaultMachine.id);
+        if (!existing) return defaultMachine;
+        
+        // Preserve downtime logs and update any ongoing breakdowns to completed
+        const updatedLogs = (existing.downtimeLogs || []).map((log) => {
+          if (log.duration === "Ongoing") {
+            const endTime = new Date();
+            const startTime = new Date(`${log.date} ${log.start}`);
+            const durationMinutes = Math.floor((endTime.getTime() - startTime.getTime()) / 60000);
+            return {
+              ...log,
+              end: endTime.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
+              duration: durationMinutes > 60 
+                ? `${Math.floor(durationMinutes / 60)} hr ${durationMinutes % 60} min`
+                : `${durationMinutes} min`,
+              action: "Machine reset and repaired",
+            };
+          }
+          return log;
+        });
+        
+        // Add state log for repair/reset
+        const stateLog = {
+          timestamp: new Date().toISOString(),
+          status: defaultMachine.status,
+          reason: "Machine repaired and reset",
+        };
+        
+        return {
+          ...defaultMachine,
+          downtimeLogs: updatedLogs,
+          stateHistory: [...(existing.stateHistory || []), stateLog],
+        };
+      })
+    );
   }
 
   const pageTitle: Record<string, string> = {
