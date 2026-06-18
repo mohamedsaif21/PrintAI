@@ -13,6 +13,7 @@ interface Props {
   machines: Machine[];
   scheduleMap: Record<string, { slaStatus: string; slaDiff: number; machines?: string }>;
   onScheduled: (order: Order, schedule: ScheduleResult, machines?: Machine[], preemptionEvents?: PreemptionEvent[]) => void;
+  onReassignOrders: (orderIds: string[], machineId: string) => void;
   addNotification: (msg: string, type: "success" | "warn" | "info") => void;
 }
 
@@ -52,7 +53,7 @@ const woStatusToVariant = (s: string): "high" | "medium" | "low" => {
   return "low";
 };
 
-export function OrdersPage({ orders, machines, scheduleMap, onScheduled, addNotification }: Props) {
+export function OrdersPage({ orders, machines, scheduleMap, onScheduled, onReassignOrders, addNotification }: Props) {
   // ── Form state ──────────────────────────────────────────────────────────
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
@@ -71,7 +72,9 @@ export function OrdersPage({ orders, machines, scheduleMap, onScheduled, addNoti
   const [optimising,     setOptimising]     = useState(false);
   const [suggestions,    setSuggestions]    = useState<Map<string, string>>(new Map());
   const [openMenuId,     setOpenMenuId]     = useState<string | null>(null);
+  const [assignMenuOpen, setAssignMenuOpen] = useState(false);
   const menuRef = useRef<HTMLDivElement>(null);
+  const assignMenuRef = useRef<HTMLDivElement>(null);
   const ITEMS_PER_PAGE = 10;
 
   const set = (k: string, v: string) => setForm((f) => ({ ...f, [k]: v }));
@@ -84,15 +87,30 @@ export function OrdersPage({ orders, machines, scheduleMap, onScheduled, addNoti
     });
   }, [searchQuery, stageFilter, shiftFilter, operatorFilter]);
 
-  // Close row menu on outside click
+  // Close menus on outside click
   useEffect(() => {
-    if (!openMenuId) return;
+    if (!openMenuId && !assignMenuOpen) return;
     const handler = (e: MouseEvent) => {
       if (menuRef.current && !menuRef.current.contains(e.target as Node)) setOpenMenuId(null);
+      if (assignMenuRef.current && !assignMenuRef.current.contains(e.target as Node)) setAssignMenuOpen(false);
     };
     document.addEventListener("mousedown", handler);
     return () => document.removeEventListener("mousedown", handler);
-  }, [openMenuId]);
+  }, [openMenuId, assignMenuOpen]);
+
+  const isMachineCompatible = (m: Machine) => {
+    return Array.from(selectedIds).every(id => {
+      const o = orders.find(ord => ord.id === id);
+      return o ? m.paperTypes.includes(o.paperType) : true;
+    });
+  };
+
+  const handleAssignToMachine = (machineId: string) => {
+    if (selectedIds.size === 0) return;
+    onReassignOrders(Array.from(selectedIds), machineId);
+    setSelectedIds(new Set());
+    setAssignMenuOpen(false);
+  };
 
   // ── Form submit ──────────────────────────────────────────────────────────
   async function submit(e: React.FormEvent) {
@@ -385,9 +403,42 @@ export function OrdersPage({ orders, machines, scheduleMap, onScheduled, addNoti
           <button className="p-2 border border-gray-200 dark:border-gray-700 rounded-lg bg-white dark:bg-gray-800 text-gray-600 dark:text-gray-400 hover:bg-gray-50 dark:hover:bg-gray-700">
             <Filter className="w-4 h-4" />
           </button>
-          <button className="px-4 py-2 text-sm font-medium text-gray-700 dark:text-gray-200 bg-gray-100 dark:bg-gray-800 hover:bg-gray-200 dark:hover:bg-gray-700 rounded-lg transition-colors">
+        <div className="relative" ref={assignMenuRef}>
+          <button
+            type="button"
+            disabled={selectedIds.size === 0}
+            onClick={() => setAssignMenuOpen(!assignMenuOpen)}
+            className="px-4 py-2 text-sm font-medium text-gray-700 dark:text-gray-200 bg-gray-100 dark:bg-gray-800 hover:bg-gray-200 dark:hover:bg-gray-700 rounded-lg transition-colors flex items-center gap-1.5 disabled:opacity-50 disabled:cursor-not-allowed"
+          >
             Assign to
+            <ChevronDown className="w-4 h-4" />
           </button>
+          {assignMenuOpen && (
+            <div className="absolute right-0 mt-1.5 z-20 bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg shadow-lg py-1 min-w-[160px] animate-in fade-in slide-in-from-top-1 duration-150">
+              {machines.map((m) => {
+                const compatible = isMachineCompatible(m);
+                return (
+                  <button
+                    key={m.id}
+                    type="button"
+                    disabled={!compatible}
+                    onClick={() => handleAssignToMachine(m.id)}
+                    className={`w-full text-left px-3 py-2 text-sm font-medium flex items-center justify-between transition-colors ${
+                      compatible
+                        ? "text-gray-700 dark:text-gray-200 hover:bg-gray-50 dark:hover:bg-gray-700 cursor-pointer"
+                        : "text-gray-400 dark:text-gray-500 cursor-not-allowed opacity-50"
+                    }`}
+                  >
+                    <span>{m.id}</span>
+                    <span className="text-xs text-gray-500 font-normal">
+                      {compatible ? `${m.speed} sheets/hr` : "Incompatible"}
+                    </span>
+                  </button>
+                );
+              })}
+            </div>
+          )}
+        </div>
           <button onClick={handleOptimise} disabled={optimising}
             className="px-4 py-2 text-sm font-medium text-white bg-gray-900 dark:bg-gray-100 dark:text-gray-900 hover:bg-gray-800 dark:hover:bg-white rounded-lg transition-colors flex items-center gap-2 disabled:opacity-70">
             {optimising ? <Loader2 className="w-4 h-4 animate-spin" /> : <Sparkles className="w-4 h-4" />}

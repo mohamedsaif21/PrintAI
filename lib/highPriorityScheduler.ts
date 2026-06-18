@@ -309,7 +309,7 @@ function tryPreemptionScheduling(
   if (preemptableMachines.length === 0) {
     return {
       success: false,
-      warnings: ["No preemptable machines found - all running High Priority jobs"],
+      warnings: ["No running lower-priority jobs found to preempt"],
       preemptionEvents: [],
       passUsed: 3,
     };

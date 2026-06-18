@@ -7,6 +7,7 @@ import { validateData, CreateOrderSchema } from "@/lib/validation";
 import { Machine, Order } from "@/types";
 import { v4 as uuidv4 } from "uuid";
 import { addHours, isBefore } from "date-fns";
+import { computeSlaStatus } from "@/lib/safeMath";
 
 type MachineRow = Machine & {
   paper_types?: string[];
@@ -187,5 +188,36 @@ export async function POST(req: NextRequest) {
   } catch (error: unknown) {
     const message = error instanceof Error ? error.message : "Internal Server Error";
     return NextResponse.json({ error: message }, { status: 500 });
+  }
+}
+
+export async function PUT(req: NextRequest) {
+  try {
+    const { orderId, tasks, overallFinish, slaStatus, slaDiff } = await req.json();
+
+    if (!orderId || !tasks) {
+      return NextResponse.json({ error: "Missing orderId or tasks" }, { status: 400 });
+    }
+
+    if (isSupabaseConfigured()) {
+      const { error } = await supabase
+        .from("schedules")
+        .update({
+          tasks,
+          overall_finish: overallFinish,
+          sla_status: slaStatus,
+          sla_diff: slaDiff,
+          explanation: "Manually reassigned to machine.",
+          created_at: new Date().toISOString(),
+        })
+        .eq("order_id", orderId);
+
+      if (error) throw error;
+    }
+
+    return NextResponse.json({ success: true });
+  } catch (error: any) {
+    console.error("PUT schedule error:", error);
+    return NextResponse.json({ error: error.message || "Internal Server Error" }, { status: 500 });
   }
 }

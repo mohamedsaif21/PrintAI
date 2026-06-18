@@ -5,8 +5,10 @@ import { PlannedJob, BulkOptimiseResult } from "@/types/planned-jobs";
 const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY!);
 
 export async function POST(req: NextRequest) {
+  let jobs: PlannedJob[] = [];
   try {
-    const { jobs }: { jobs: PlannedJob[] } = await req.json();
+    const body = await req.json();
+    jobs = body.jobs || [];
 
     if (!jobs || jobs.length === 0) {
       return NextResponse.json({ suggestions: [] });
@@ -34,9 +36,9 @@ Return exactly:
     const suggestions: BulkOptimiseResult[] = JSON.parse(text);
 
     return NextResponse.json({ suggestions });
-  } catch {
+  } catch (error) {
+    console.error("AI Optimise error, falling back to deterministic suggestions:", error);
     // Fallback — generate basic suggestions without Gemini
-    const { jobs }: { jobs: PlannedJob[] } = await req.json().catch(() => ({ jobs: [] }));
     const suggestions = (jobs || []).map((j: PlannedJob) => ({
       jobId: j.id,
       suggestedMachine: j.machine_name === "M1" ? "M3" : "M1",

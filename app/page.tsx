@@ -6,8 +6,9 @@ import { OrdersPage } from "@/components/OrdersPage";
 import { MachinesPage } from "@/components/MachinesPage";
 import { SchedulePage } from "@/components/SchedulePage";
 import { ReportsPage } from "@/components/ReportsPage";
-import { Order, Machine, OrderStatus, ScheduleResult, ScheduledTask, PreemptionEvent } from "@/types";
+import { Order, Machine, OrderStatus, ScheduleResult, ScheduledTask, PreemptionEvent, QueuedJob } from "@/types";
 import { DEFAULT_MACHINES, dispatchScheduleToMachines, normaliseMachine, seedM2WithRunningJob, tickMachines, SEED_M2_ORDER_ID } from "@/lib/scheduler";
+import { computeSlaStatus } from "@/lib/safeMath";
 
 type Notif = { msg: string; type: "success" | "warn" | "info" };
 type ScheduleMap = Record<string, { slaStatus: string; slaDiff: number; machines?: string }>;
@@ -207,6 +208,134 @@ export default function Home() {
     setPage("schedule");
   }
 
+  function handleReassignOrders(orderIds: string[], targetMachineId: string) {
+    const targetMachine = machines.find((m) => m.id === targetMachineId);
+    if (!targetMachine) return;
+
+    setOrders((prevOrders) => {
+      const affectedOrders = prevOrders.filter((o) => orderIds.includes(o.id));
+      if (affectedOrders.length === 0) return prevOrders;
+
+      setMachines((prevMachines) => {
+        let working = prevMachines.map(normaliseMachine);
+
+        // Remove these orders from all machine queues
+        working = working.map((m) => {
+          const filteredQueue = m.queue.filter((job) => !orderIds.includes(job.orderId));
+          if (filteredQueue.length === m.queue.length) return m;
+
+          // If we removed the currently running job on this machine, and there's a next job,
+          // resume it or mark it paused so the tick engine auto-starts it
+          let nextQueue = filteredQueue;
+          if (nextQueue.length > 0 && m.queue[0] && orderIds.includes(m.queue[0].orderId)) {
+            if (nextQueue[0].status === "queued") {
+              nextQueue[0] = { ...nextQueue[0], status: "paused" as const };
+            }
+          }
+
+          const nextStatus = nextQueue.length === 0 && m.status === "busy"
+            ? (m.id === "M5" ? "backup" as const : "available" as const)
+            : m.status;
+
+          return {
+            ...m,
+            queue: nextQueue,
+            status: nextStatus,
+            assignedOrderId: nextQueue.length > 0 ? nextQueue[0].orderId : undefined,
+            utilisation: nextQueue.length === 0 ? 0 : m.utilisation,
+          };
+        });
+
+        // Add each order to target machine
+        for (const order of affectedOrders) {
+          const quantity = order.quantity;
+          const speed = targetMachine.speed;
+          const estimatedHours = parseFloat((quantity / speed).toFixed(2));
+          const estimatedFinish = new Date(Date.now() + estimatedHours * 60 * 60 * 1000).toISOString();
+
+          // Recompute SLA status
+          const { slaStatus, slaDiff } = computeSlaStatus(order.deadline, estimatedFinish);
+
+          // Update local scheduleMap state & sessionStorage
+          setScheduleMap((prevMap) => {
+            const nextMap = {
+              ...prevMap,
+              [order.id]: {
+                slaStatus,
+                slaDiff,
+                machines: targetMachineId,
+              },
+            };
+            sessionStorage.setItem("scheduleMap", JSON.stringify(nextMap));
+            return nextMap;
+          });
+
+          // Build new QueuedJob and append to target machine queue
+          const targetIdx = working.findIndex((m) => m.id === targetMachineId);
+          if (targetIdx !== -1) {
+            const m = working[targetIdx];
+            const newJob: QueuedJob = {
+              jobId: `${targetMachineId}-${Date.now()}-${Math.floor(Math.random() * 1000)}`,
+              orderId: order.id,
+              machineId: targetMachineId,
+              priority: order.priority,
+              assignedQty: quantity,
+              estimatedHours,
+              totalEstimatedHours: estimatedHours,
+              startedAt: new Date().toISOString(),
+              realFinishAt: estimatedFinish,
+              status: m.queue.length === 0 ? "running" as const : "queued" as const,
+            };
+
+            const queue = [...m.queue, newJob];
+            const nextStatus = m.status === "available" || m.status === "backup" ? "busy" as const : m.status;
+
+            working[targetIdx] = {
+              ...m,
+              status: nextStatus,
+              queue,
+              assignedOrderId: queue[0].orderId,
+              utilisation: Math.min(100, Math.max(10, Math.round((queue[0].assignedQty / m.capacity) * 100))),
+            };
+          }
+
+          // Persist schedule changes to the database
+          const tasks = [{
+            machineId: targetMachineId,
+            machineSpeed: speed,
+            assignedQty: quantity,
+            estimatedHours,
+            estimatedFinish,
+          }];
+
+          fetch("/api/schedule", {
+            method: "PUT",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              orderId: order.id,
+              tasks,
+              overallFinish: estimatedFinish,
+              slaStatus,
+              slaDiff,
+            }),
+          }).catch((err) => console.error("Database error reassigning order:", err));
+        }
+
+        return working;
+      });
+
+      // Map orders state to update status if needed
+      return prevOrders.map((o) => {
+        if (orderIds.includes(o.id) && o.status === "Pending Approval") {
+          return { ...o, status: "Scheduled" as const };
+        }
+        return o;
+      });
+    });
+
+    pushNotif(`Manually reassigned ${orderIds.length} job(s) to ${targetMachineId}`, "success");
+  }
+
   function handleApprovalDecision(orderId: string, status: any) {
     setOrders((prev) => prev.map((o) => (o.id === orderId ? { ...o, status } : o)));
     setLastOrder((prev) => (prev?.id === orderId ? { ...prev, status } : prev));
@@ -395,7 +524,7 @@ export default function Home() {
             <DashboardPage orders={orders} machines={machines} lastSchedule={lastSchedule} notifications={notifications} />
           )}
           {page === "orders" && (
-            <OrdersPage orders={orders} machines={machines} scheduleMap={scheduleMap} onScheduled={handleScheduled} addNotification={pushNotif} />
+            <OrdersPage orders={orders} machines={machines} scheduleMap={scheduleMap} onScheduled={handleScheduled} onReassignOrders={handleReassignOrders} addNotification={pushNotif} />
           )}
           {page === "machines" && (
             <MachinesPage machines={machines} orders={orders} lastSchedule={lastSchedule} onFailure={handleFailure} onReset={handleReset} />
