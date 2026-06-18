@@ -8,7 +8,7 @@ import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, Cell } from 
 interface Props {
   schedule: ScheduleResult | null;
   order: Order | null;
-  onApprovalDecision: (orderId: string, status: "In Progress" | "At Risk") => void;
+  onApprovalDecision: (orderId: string, status: "In Progress" | "At Risk" | "Rejected") => void;
 }
 
 const STEP_LABELS = [
@@ -71,7 +71,7 @@ export function SchedulePage({ schedule, order, onApprovalDecision }: Props) {
             <p className="text-xs text-gray-500 mt-0.5">{order.quantity.toLocaleString()} × {order.product} for {order.customer}</p>
           </div>
           <div className="flex flex-col items-end gap-2">
-            <Badge variant={order.status === "Pending Approval" ? "warn" : order.status === "At Risk" ? "risk" : "safe"} className="text-sm px-3 py-1">
+            <Badge variant={order.status === "Pending Approval" ? "warn" : order.status === "Rejected" ? "gray" : order.status === "At Risk" ? "risk" : "safe"} className="text-sm px-3 py-1">
               {order.status}
             </Badge>
             <Badge variant={schedule.slaStatus === "SAFE" ? "safe" : "risk"} className="text-sm px-3 py-1">
@@ -90,7 +90,7 @@ export function SchedulePage({ schedule, order, onApprovalDecision }: Props) {
               <div className="flex gap-2">
                 <button
                   type="button"
-                  onClick={() => onApprovalDecision(order.id, "At Risk")}
+                  onClick={() => onApprovalDecision(order.id, "Rejected")}
                   className="inline-flex items-center gap-1.5 rounded-lg border border-red-200 bg-white px-3 py-1.5 text-sm font-medium text-red-700 hover:bg-red-50 dark:border-red-900 dark:bg-gray-900 dark:text-red-300 dark:hover:bg-red-950/30"
                 >
                   <XCircle className="h-4 w-4" />

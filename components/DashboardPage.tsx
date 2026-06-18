@@ -2,6 +2,7 @@
 import { Order, Machine, ScheduleResult } from "@/types";
 import { Badge } from "@/components/ui/Badge";
 import { CheckCircle2, AlertTriangle, Clock, Cpu, FileText } from "lucide-react";
+import { JobStatusPanel } from "@/components/JobStatusPanel";
 
 interface Props {
   orders: Order[];
@@ -101,31 +102,11 @@ export function DashboardPage({ orders, machines, lastSchedule, notifications }:
       </div>
 
       {lastSchedule && (
-        <div className="bg-white dark:bg-gray-900 rounded-xl border border-gray-200 dark:border-gray-800 p-4">
-          <div className="flex items-start justify-between gap-4 mb-3">
-            <div>
-              <h3 className="text-sm font-medium text-gray-900 dark:text-gray-100">Latest AI schedule result</h3>
-              <p className="text-xs text-gray-500 mt-0.5">
-                {lastSchedule.orderId}
-                {latestOrder ? ` - ${latestOrder.product} for ${latestOrder.customer}` : ""}
-              </p>
-            </div>
-            <Badge variant={lastSchedule.slaStatus === "SAFE" ? "safe" : "risk"}>SLA {lastSchedule.slaStatus}</Badge>
-          </div>
-          <div className="grid gap-3 md:grid-cols-3">
-            {lastSchedule.tasks.map((task) => (
-              <div key={task.machineId} className="rounded-lg bg-gray-50 dark:bg-gray-800 p-3">
-                <div className="flex items-center justify-between mb-1">
-                  <p className="text-sm font-semibold text-gray-900 dark:text-gray-100">{task.machineId}</p>
-                  <span className="text-xs text-gray-500">{task.estimatedHours}h</span>
-                </div>
-                <p className="text-xs text-gray-500">{task.assignedQty.toLocaleString()} sheets assigned</p>
-                <p className="text-xs text-gray-400 mt-1">
-                  Finish {new Date(task.estimatedFinish).toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit" })}
-                </p>
-              </div>
-            ))}
-          </div>
+        <div className="space-y-3">
+          <h3 className="text-sm font-semibold text-gray-900 dark:text-gray-100 px-1">Latest AI schedule result</h3>
+          {latestOrder && (
+            <JobStatusPanel order={latestOrder} schedule={lastSchedule} machines={machines} />
+          )}
         </div>
       )}
     </div>

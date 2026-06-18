@@ -46,7 +46,7 @@ export interface Machine {
 }
 
 export type Priority = "High" | "Medium" | "Low";
-export type OrderStatus = "Pending" | "Pending Approval" | "Scheduled" | "In Progress" | "Completed" | "At Risk";
+export type OrderStatus = "Pending" | "Pending Approval" | "Scheduled" | "In Progress" | "Completed" | "At Risk" | "Rejected";
 
 export interface Order {
   id: string;

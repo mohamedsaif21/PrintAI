@@ -7,7 +7,7 @@ import { MachinesPage } from "@/components/MachinesPage";
 import { SchedulePage } from "@/components/SchedulePage";
 import { ReportsPage } from "@/components/ReportsPage";
 import { Order, Machine, OrderStatus, ScheduleResult, ScheduledTask, PreemptionEvent } from "@/types";
-import { DEFAULT_MACHINES, dispatchScheduleToMachines, normaliseMachine, seedM2WithRunningJob, tickMachines } from "@/lib/scheduler";
+import { DEFAULT_MACHINES, dispatchScheduleToMachines, normaliseMachine, seedM2WithRunningJob, tickMachines, SEED_M2_ORDER_ID } from "@/lib/scheduler";
 
 type Notif = { msg: string; type: "success" | "warn" | "info" };
 type ScheduleMap = Record<string, { slaStatus: string; slaDiff: number; machines?: string }>;
@@ -61,7 +61,9 @@ export default function Home() {
       const res = await fetch("/api/machines");
       const data = await res.json();
       setMachines(seedM2WithRunningJob((data.machines || DEFAULT_MACHINES).map(normaliseMachine)));
-    } catch {}
+    } catch {
+      setMachines(seedM2WithRunningJob(DEFAULT_MACHINES));
+    }
   }, []);
 
   useEffect(() => {
@@ -107,7 +109,7 @@ export default function Home() {
 
       setMachines(machinesWithStateUpdate);
       Object.entries(completedByOrder).forEach(([orderId, machineIds]) => {
-        if (orderId === "ORD-SEED-M2") {
+        if (orderId === SEED_M2_ORDER_ID) {
           pushNotif(`M2 seed job completed - machine is now available.`, "success");
           return;
         }
@@ -197,10 +199,37 @@ export default function Home() {
     setPage("schedule");
   }
 
-  function handleApprovalDecision(orderId: string, status: OrderStatus) {
+  function handleApprovalDecision(orderId: string, status: any) {
     setOrders((prev) => prev.map((o) => (o.id === orderId ? { ...o, status } : o)));
     setLastOrder((prev) => (prev?.id === orderId ? { ...prev, status } : prev));
     pushNotif(`${orderId} ${status === "In Progress" ? "approved for execution" : "rejected for review"}`, status === "In Progress" ? "success" : "warn");
+
+    if (status === "Rejected") {
+      setMachines((prev) =>
+        prev.map((m) => {
+          const newQueue = m.queue.filter((job) => job.orderId !== orderId);
+          if (newQueue.length === m.queue.length) return m;
+          
+          // If we removed the currently active job, and the next job is 'queued',
+          // mark it as 'paused' so the tick engine will automatically start it cleanly.
+          if (newQueue.length > 0 && m.queue[0].orderId === orderId && newQueue[0].status === "queued") {
+            newQueue[0] = { ...newQueue[0], status: "paused" };
+          }
+          
+          const newStatus = newQueue.length === 0 && m.status === "busy" 
+            ? (m.id === "M5" ? "backup" : "available") 
+            : m.status;
+            
+          return {
+            ...m,
+            queue: newQueue,
+            status: newStatus,
+            assignedOrderId: newQueue.length > 0 ? newQueue[0].orderId : undefined,
+            utilisation: newQueue.length === 0 ? 0 : m.utilisation,
+          };
+        })
+      );
+    }
 
     fetch("/api/orders", {
       method: "PATCH",
@@ -361,7 +390,7 @@ export default function Home() {
             <OrdersPage orders={orders} machines={machines} scheduleMap={scheduleMap} onScheduled={handleScheduled} addNotification={pushNotif} />
           )}
           {page === "machines" && (
-            <MachinesPage machines={machines} lastSchedule={lastSchedule} onFailure={handleFailure} onReset={handleReset} />
+            <MachinesPage machines={machines} orders={orders} lastSchedule={lastSchedule} onFailure={handleFailure} onReset={handleReset} />
           )}
           {page === "schedule" && (
             <SchedulePage schedule={lastSchedule} order={lastOrder} onApprovalDecision={handleApprovalDecision} />

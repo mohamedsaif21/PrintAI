@@ -11,7 +11,7 @@ const MachineStatus = z.enum(["available", "busy", "backup", "breakdown"]);
 const Priority = z.enum(["High", "Medium", "Low"]);
 
 // Common schema for order status
-const OrderStatus = z.enum(["Pending", "Pending Approval", "Scheduled", "In Progress", "Completed", "At Risk"]);
+const OrderStatus = z.enum(["Pending", "Pending Approval", "Scheduled", "In Progress", "Completed", "At Risk", "Rejected"]);
 
 /**
  * Schema for creating a new order via POST /api/schedule

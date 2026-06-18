@@ -1,4 +1,4 @@
-import { Machine, Order, ScheduleResult, ScheduledTask, Priority, PreemptionEvent } from "@/types";
+import { Machine, Order, ScheduleResult, ScheduledTask, Priority, PreemptionEvent, QueuedJob } from "@/types";
 import { differenceInMinutes } from "date-fns";
 import { computeRealFinish, remainingFactoryHours } from "@/lib/timeEngine";
 import { normaliseMachine } from "@/lib/scheduler";
@@ -58,6 +58,7 @@ export function scheduleHighPriorityOrder(
   // ═══════════════════════════════════════════════════════════════════
   const pass1Result = tryNormalScheduling(order, compatibleMachines, normalizedMachines);
   
+  // Pass 1 succeeds ONLY if it can schedule with SLA SAFE
   if (pass1Result.success && pass1Result.scheduleResult!.slaStatus === "SAFE") {
     warnings.push("Pass 1: Normal scheduling successful - SLA SAFE");
     return {
@@ -67,7 +68,11 @@ export function scheduleHighPriorityOrder(
     };
   }
 
-  warnings.push("Pass 1: Normal scheduling failed or SLA at RISK");
+  if (pass1Result.success && pass1Result.scheduleResult!.slaStatus === "RISK") {
+    warnings.push("Pass 1: Normal scheduling would violate SLA - trying backup/preemption");
+  } else {
+    warnings.push("Pass 1: Normal scheduling failed");
+  }
 
   // ═══════════════════════════════════════════════════════════════════
   // PASS 2: Backup Machine (M5)
@@ -116,6 +121,7 @@ export function scheduleHighPriorityOrder(
 
 /**
  * PASS 1: Try normal scheduling by appending to machine queues
+ * For busy machines, new High priority jobs should be queued AFTER current work finishes
  */
 function tryNormalScheduling(
   order: Order,
@@ -125,12 +131,25 @@ function tryNormalScheduling(
   const warnings: string[] = [];
   const preemptionEvents: PreemptionEvent[] = [];
 
-  // Sort by speed (faster machines first) and status (available first)
-  const sorted = [...compatibleMachines].sort((a, b) => {
-    if (a.status !== b.status) return a.status === "available" ? -1 : 1;
-    return b.speed - a.speed;
-  });
+  // Filter to only available machines or those with empty queues for Pass 1
+  // Pass 1 should NOT queue behind busy machines - that's what Pass 3 is for
+  const availableMachines = compatibleMachines.filter((m) => 
+    m.status === "available" || (m.status === "busy" && m.queue.length === 0)
+  );
 
+  if (availableMachines.length === 0) {
+    return {
+      success: false,
+      scheduleResult: undefined,
+      updatedMachines: undefined,
+      warnings: ["No available machines for normal scheduling"],
+      preemptionEvents: [],
+      passUsed: 1,
+    };
+  }
+
+  // Sort by speed (faster machines first)
+  const sorted = [...availableMachines].sort((a, b) => b.speed - a.speed);
   const totalSpeed = sorted.reduce((sum, m) => sum + m.speed, 0);
   const now = new Date();
 
@@ -140,14 +159,7 @@ function tryNormalScheduling(
     const share = isLast ? remainingQty : Math.round((m.speed / totalSpeed) * order.quantity);
     remainingQty -= share;
     const factoryHours = share / m.speed;
-    
-    // Calculate start time based on when machine queue will be free
-    const queueFinishTime = m.queue.length > 0 
-      ? new Date(m.queue[m.queue.length - 1].realFinishAt)
-      : now;
-    
-    const startAt = queueFinishTime > now ? queueFinishTime : now;
-    const realFinish = computeRealFinish(startAt, factoryHours);
+    const realFinish = computeRealFinish(now, factoryHours);
 
     return {
       machineId: m.id,
@@ -175,27 +187,18 @@ function tryNormalScheduling(
     const task = tasks.find((t) => t.machineId === m.id);
     if (!task) return m;
 
-    const isStartingNow = m.queue.length === 0 && m.status === "available";
-
     const newJob = buildJob({
       orderId: order.id,
       machineId: m.id,
       priority: order.priority,
       assignedQty: task.assignedQty,
       factoryHours: task.estimatedHours,
-      status: isStartingNow ? "running" : "queued",
+      status: "running",
     });
-
-    // Override start/finish times if it's queued behind an existing job
-    if (!isStartingNow) {
-      const startAt = m.queue.length > 0 ? new Date(m.queue[m.queue.length - 1].realFinishAt) : now;
-      newJob.startedAt = startAt.toISOString();
-      newJob.realFinishAt = task.estimatedFinish;
-    }
 
     return {
       ...m,
-      status: m.queue.length === 0 && m.status === "available" ? "busy" : m.status,
+      status: "busy" as const,
       queue: [...m.queue, newJob],
     };
   });
@@ -335,20 +338,27 @@ function tryPreemptionScheduling(
   // Create the resumed portion of the interrupted job
   const remainingFactoryHours = remainingQty / targetMachine.speed;
 
-  const resumedJob = {
-    ...runningJob,
+  const resumedJob: QueuedJob = {
     jobId: `${runningJob.jobId}-resumed`,
+    orderId: runningJob.orderId,
+    machineId: runningJob.machineId,
+    priority: runningJob.priority,
     assignedQty: remainingQty,
-    estimatedHours: parseFloat(remainingFactoryHours.toFixed(2)), // Frozen duration
-    status: "paused" as const, // Let the ticker handle fresh start times when it resumes
+    estimatedHours: parseFloat(remainingFactoryHours.toFixed(2)), // Frozen duration for resume
+    totalEstimatedHours: runningJob.totalEstimatedHours, // Keep original total
+    startedAt: new Date(now).toISOString(), // Placeholder - will be recalculated on resume
+    realFinishAt: new Date(now).toISOString(), // Placeholder - will be recalculated on resume
+    status: "paused", // Ticker will call resumeNextIfPaused() to start it
   };
 
-  // Build the new queue: Drop the completed portion from React state, add high priority + resumed
+  // Build the new queue: Replace the running job with high-priority + resumed
+  // The running job is at runningJobIndex, we replace it with 2 jobs:
+  // 1. High-priority job (starts running immediately)
+  // 2. Resumed job (paused, will auto-resume when high-priority completes)
   const newQueue = [
-    ...targetMachine.queue.slice(0, runningJobIndex),
     highPriorityJob,
     resumedJob,
-    ...targetMachine.queue.slice(runningJobIndex + 1),
+    ...targetMachine.queue.filter((_, idx) => idx !== runningJobIndex),
   ];
 
   // We don't have the original SLA deadline in the queue state, so we warn about the delay

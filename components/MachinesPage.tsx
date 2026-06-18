@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { Machine, ScheduleResult, ScheduledTask } from "@/types";
+import { Machine, Order, ScheduleResult, ScheduledTask } from "@/types";
 import {
   AlertTriangle,
   ArrowLeft,
@@ -14,9 +14,12 @@ import {
   Zap,
 } from "lucide-react";
 import { Badge } from "@/components/ui/Badge";
+import { JobStatusPanel } from "@/components/JobStatusPanel";
+import { resolveActiveJobForMachine } from "@/lib/scheduler";
 
 interface Props {
   machines: Machine[];
+  orders: Order[];
   lastSchedule: ScheduleResult | null;
   onFailure: (result: {
     newTasks: ScheduledTask[];
@@ -274,10 +277,14 @@ function LiveJobProgress({ machine }: { machine: Machine }) {
 
 function MachineDetail({
   machine,
+  machines,
+  orders,
   lastSchedule,
   onBack,
 }: {
   machine: Machine;
+  machines: Machine[];
+  orders: Order[];
   lastSchedule: ScheduleResult | null;
   onBack: () => void;
 }) {
@@ -294,8 +301,12 @@ function MachineDetail({
   const activeTask = lastSchedule?.tasks.find((task) => task.machineId === machine.id);
   const isWorking = machine.status === "busy" && Boolean(activeTask);
   const jobProgress = isWorking ? machine.utilisation : machine.status === "available" ? 0 : Math.min(100, machine.utilisation);
-  const activeOrderId = activeTask ? lastSchedule?.orderId : machine.assignedOrderId;
-  
+  const activeJob = resolveActiveJobForMachine(machine, orders, lastSchedule, machines);
+
+  const shiftEndTime = currentTime;
+  const shiftStartTime = new Date(currentTime.getTime() - 5 * 60 * 60 * 1000);
+  const formatTime = (date: Date) => date.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", hour12: false });
+
   // Build dynamic job history from machine queue and past static data
   const dynamicJobHistory = [
     ...machine.queue
@@ -502,11 +513,6 @@ function MachineDetail({
   };
   
   const dynamicRuntimeSegments = buildRuntimeSegments();
-  
-  // Calculate shift time range (current time - 5 hours to current time)
-  const shiftEndTime = currentTime;
-  const shiftStartTime = new Date(currentTime.getTime() - 5 * 60 * 60 * 1000);
-  const formatTime = (date: Date) => date.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", hour12: false });
 
   return (
     <div className="space-y-4">
@@ -520,8 +526,7 @@ function MachineDetail({
 
       <h2 className="text-xl font-bold text-gray-900 dark:text-gray-100">{extra.name}</h2>
 
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
-        <div className="lg:col-span-2 bg-white dark:bg-gray-900 rounded-xl border border-gray-200 dark:border-gray-800 p-5">
+      <div className="bg-white dark:bg-gray-900 rounded-xl border border-gray-200 dark:border-gray-800 p-5">
           <div className="flex items-center gap-3 mb-4">
             <h3 className="text-base font-semibold text-gray-900 dark:text-gray-100">{extra.name}</h3>
             <span className={`px-2.5 py-1 rounded-md text-xs font-semibold ${statusStyle.bg} ${statusStyle.text}`}>
@@ -548,33 +553,16 @@ function MachineDetail({
               ))}
             </div>
           </div>
-        </div>
-
-        <div className="bg-white dark:bg-gray-900 rounded-xl border border-gray-200 dark:border-gray-800 p-5">
-          <div className="flex items-center justify-between mb-4">
-            <h3 className="text-base font-semibold text-gray-900 dark:text-gray-100">Job Status</h3>
-            {isWorking && <span className="text-sm text-blue-600 dark:text-blue-400 font-medium">Active</span>}
-          </div>
-          <div className="space-y-2 text-sm mb-4">
-            <div><span className="text-gray-500">Wo no: </span><span className="font-semibold">{activeOrderId || extra.woNo}</span></div>
-            <div><span className="text-gray-500">SLA Deadline: </span><span className="font-semibold">{activeTask && lastSchedule ? formatDate(lastSchedule.overallFinish) : extra.slaDeadline}</span></div>
-            <div><span className="text-gray-500">Start Date: </span><span className="font-semibold">{isWorking ? new Date().toLocaleDateString() : extra.startDate}</span></div>
-            <div><span className="text-gray-500">EDD: </span><span className="font-semibold">{activeTask ? formatDate(activeTask.estimatedFinish) : extra.edd}</span></div>
-          </div>
-          <div className="flex items-center justify-center">
-            <div className="relative w-28 h-16 overflow-hidden">
-              <div className="absolute inset-0 rounded-t-full border-[12px] border-gray-200 dark:border-gray-700 border-b-0" />
-              <div
-                className={`absolute inset-0 rounded-t-full border-[12px] ${isWorking ? "border-emerald-500" : "border-gray-400"} border-b-0 origin-bottom transition-all`}
-                style={{ transform: `rotate(${(jobProgress / 100) * 180}deg)`, clipPath: "inset(0 0 0 0)" }}
-              />
-              <div className="absolute bottom-0 left-0 right-0 text-center">
-                <p className="text-xs font-semibold text-gray-600 dark:text-gray-400">{isWorking ? "In Progress" : "Standby"}</p>
-              </div>
-            </div>
-          </div>
-        </div>
       </div>
+
+      {activeJob ? (
+        <JobStatusPanel order={activeJob.order} schedule={activeJob.schedule} machines={machines} />
+      ) : (
+        <div className="bg-white dark:bg-gray-900 rounded-xl border border-gray-200 dark:border-gray-800 p-5 flex items-center justify-between">
+          <h3 className="text-base font-semibold text-gray-900 dark:text-gray-100">Job Status</h3>
+          <span className="text-sm text-gray-500 font-medium">Standby / No active order</span>
+        </div>
+      )}
 
       <div className="bg-white dark:bg-gray-900 rounded-xl border border-gray-200 dark:border-gray-800 p-5">
         <h3 className="text-sm font-semibold text-gray-900 dark:text-gray-100 mb-1">Machine Runtime Overview</h3>
@@ -758,7 +746,7 @@ function MachineDetail({
   );
 }
 
-export function MachinesPage({ machines, lastSchedule, onFailure, onReset }: Props) {
+export function MachinesPage({ machines, orders, lastSchedule, onFailure, onReset }: Props) {
   const [search, setSearch] = useState("");
   const [failTarget, setFailTarget] = useState("M1");
   const [loading, setLoading] = useState(false);
@@ -812,7 +800,7 @@ export function MachinesPage({ machines, lastSchedule, onFailure, onReset }: Pro
   }
 
   if (selectedMachine) {
-    return <MachineDetail machine={selectedMachine} lastSchedule={lastSchedule} onBack={() => setSelectedMachine(null)} />;
+    return <MachineDetail machine={selectedMachine} machines={machines} orders={orders} lastSchedule={lastSchedule} onBack={() => setSelectedMachine(null)} />;
   }
 
   return (

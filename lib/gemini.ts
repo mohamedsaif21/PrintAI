@@ -60,16 +60,51 @@ Keep it to 2-3 direct sentences.`;
   }
 }
 
+import { differenceInMinutes } from "date-fns";
+
 export async function analyseRisk(
   order: Order,
   machines: Machine[],
   schedule: ScheduleResult
 ): Promise<RiskAnalysis> {
+  const deadline = new Date(order.deadline);
+  const overallFinish = new Date(schedule.overallFinish);
+  
+  // Calculate exact minutes between deadline and finish. 
+  // Positive means we finish BEFORE deadline (buffer).
+  // Negative means we finish AFTER deadline (late).
+  const diffMinutes = differenceInMinutes(deadline, overallFinish);
+  
+  // Determine risk level based on actual time difference
+  let calcRiskLevel: "LOW" | "MEDIUM" | "HIGH" = "LOW";
+  let calcRiskScore = 10;
+  
+  if (diffMinutes < 0) {
+    // We are late -> HIGH risk
+    calcRiskLevel = "HIGH";
+    // Score increases the later we are, up to 100
+    calcRiskScore = Math.min(100, 75 + Math.abs(diffMinutes) / 2);
+  } else if (diffMinutes < 60) {
+    // Within 60 minutes buffer -> MEDIUM risk
+    calcRiskLevel = "MEDIUM";
+    // Score gets closer to 70 as buffer gets smaller
+    calcRiskScore = Math.max(30, 70 - (diffMinutes / 2));
+  } else {
+    // Plentiful buffer -> LOW risk
+    calcRiskLevel = "LOW";
+    calcRiskScore = Math.max(0, 20 - (diffMinutes / 10));
+  }
+  
+  // Round score
+  calcRiskScore = Math.round(calcRiskScore);
+
   const fallback: RiskAnalysis = {
-    riskScore: schedule.slaStatus === "RISK" ? 75 : 25,
-    riskLevel: schedule.slaStatus === "RISK" ? "HIGH" : "LOW",
+    riskScore: calcRiskScore,
+    riskLevel: calcRiskLevel,
     anomalies: [],
-    recommendation: schedule.slaStatus === "RISK" ? "SLA deadline is at risk. Consider adding more machines or reducing order quantity." : "Schedule looks healthy.",
+    recommendation: calcRiskLevel === "HIGH" ? "SLA deadline is breached. Consider adding more machines or reducing order quantity." : 
+                    calcRiskLevel === "MEDIUM" ? "SLA buffer is tight. Monitor closely." : 
+                    "Schedule looks healthy.",
   };
 
   try {
@@ -77,33 +112,43 @@ export async function analyseRisk(
     if (!model) return fallback;
 
     const machineSummary = machines
-      .map((m) => `${m.id}: status=${m.status}, speed=${m.speed}, jobs_in_queue=${m.queue.length}, paperTypes=${m.paperTypes.join("/")}`)
+      .map((m) => `${m.id}: status=${m.status}, speed=${m.speed}, jobs_in_queue=${m.queue?.length || 0}, paperTypes=${(m.paperTypes || []).join("/")}`)
       .join("\n");
 
     const taskSummary = schedule.tasks
       .map((t) => `${t.machineId}: ${t.assignedQty.toLocaleString()} pcs, ${t.estimatedHours}h`)
       .join(", ");
 
-    const prompt = `You are an AI risk analyst for a print factory. Analyse the following production data and return a JSON object only — no markdown, no explanation outside JSON.
+    const prompt = `You are an AI risk analyst for a print factory. Analyse the production data and return a JSON object only. No markdown, no conversational text.
 
-Order: ${order.quantity.toLocaleString()} ${order.product} for ${order.customer}, paper: ${order.paperType}, priority: ${order.priority}, deadline: ${new Date(order.deadline).toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit" })}.
-Schedule: ${taskSummary}. Overall finish: ${new Date(schedule.overallFinish).toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit" })}. SLA: ${schedule.slaStatus} (${Math.abs(schedule.slaDiff)} min ${schedule.slaDiff >= 0 ? "ahead" : "behind"}).
-Machines:\n${machineSummary}
-*Context: A 'busy' status means the machine is running. New orders are safely queued behind existing jobs if the SLA allows.*
+Order: ${order.quantity.toLocaleString()} ${order.product}, Priority: ${order.priority}, SLA: ${schedule.slaStatus} (${Math.abs(schedule.slaDiff)} min ${schedule.slaDiff >= 0 ? "ahead" : "late"}).
+Schedule: ${taskSummary}.
+Calculated Risk Level: ${calcRiskLevel}
+Calculated Risk Score: ${calcRiskScore}
+Machines: \n${machineSummary}
+Context: 'busy' means running. Queuing is normal if SLA is met.
 
-Return exactly this JSON:
+Return exactly this JSON. Ensure text fields are ultra-concise and strictly factual:
 {
-  "riskScore": <integer 0-100>,
-  "riskLevel": <"LOW" | "MEDIUM" | "HIGH">,
-  "anomalies": [<short string per anomaly detected, max 3>],
-  "recommendation": <one actionable sentence for the supervisor>
+  "riskScore": ${calcRiskScore},
+  "riskLevel": "${calcRiskLevel}",
+  "anomalies": [<string: max 8 words per anomaly, strictly factual (e.g., 'M2 queue exceeds 15 hours'), max 2 items>],
+  "recommendation": <string: max 12 words, start with action verb (e.g., 'Preempt medium jobs on M2')>
 }`;
 
     const response = await model.generateContent(prompt);
     const text = response.response.text().trim();
     const json = text.replace(/```json|```/g, "").trim();
-    return JSON.parse(json) as RiskAnalysis;
-  } catch {
+    const parsed = JSON.parse(json) as RiskAnalysis;
+    
+    // Enforce deterministic risk score and level overrides
+    return {
+      ...parsed,
+      riskScore: calcRiskScore,
+      riskLevel: calcRiskLevel,
+    };
+  } catch (error) {
+    console.error("Gemini risk analysis error:", error);
     return fallback;
   }
 }
@@ -120,7 +165,8 @@ export async function generateFailureExplanation(
     const prompt = `In 2 sentences, explain to a factory supervisor that machine ${failedMachineId} has broken down mid-run with ${remainingQty.toLocaleString()} pieces remaining, and the AI has automatically reassigned the work to ${backupMachineId} (backup machine). SLA is ${slaStatus}. Keep it factual and under 40 words.`;
     const response = await model.generateContent(prompt);
     return response.response.text();
-  } catch {
+  } catch (error) {
+    console.error("Gemini failure explanation error:", error);
     return `${failedMachineId} experienced a breakdown. The remaining ${remainingQty.toLocaleString()} pieces have been automatically reassigned to ${backupMachineId}. SLA is ${slaStatus}.`;
   }
 }
