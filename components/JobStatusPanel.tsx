@@ -177,7 +177,7 @@ export function JobStatusPanel({ order, schedule, machines }: JobStatusPanelProp
           <div>
             <span className="text-3xl font-bold text-gray-900 dark:text-gray-100">{progress.percent}%</span>
             <span className="text-sm text-gray-500 ml-2">
-              ({progress.completedSheets.toLocaleString()} / {progress.totalSheets.toLocaleString()} sheets)
+              ({progress.completedSheets.toLocaleString()} / {progress.totalSheets.toLocaleString()} jobs)
             </span>
           </div>
           <div className="text-sm font-bold text-blue-600 dark:text-blue-400 uppercase tracking-wider">
@@ -235,7 +235,7 @@ export function JobStatusPanel({ order, schedule, machines }: JobStatusPanelProp
                               <div key={`${j.jobId}-${idx}`} className="flex justify-between items-start text-xs">
                                 <div className="flex flex-col">
                                   <span className="text-gray-700 dark:text-gray-300 font-medium">Order {j.orderId}</span>
-                                  <span className="text-gray-500">{j.assignedQty.toLocaleString()} sheets</span>
+                                  <span className="text-gray-500">{j.assignedQty.toLocaleString()} jobs</span>
                                 </div>
                                 <div className="flex flex-col items-end">
                                   <span className={`font-medium ${isPaused ? 'text-amber-600' : 'text-blue-600'}`}>

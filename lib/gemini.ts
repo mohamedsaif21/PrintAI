@@ -1,6 +1,5 @@
 import { GoogleGenerativeAI } from "@google/generative-ai";
 import { Order, ScheduleResult, Machine } from "@/types";
-import { computeSlaDiffMinutes } from "@/lib/safeMath";
 
 export interface RiskAnalysis {
   riskScore: number;        // 0-100
@@ -32,7 +31,7 @@ export async function generateScheduleExplanation(
     const taskSummary = result.tasks
       .map(
         (t) =>
-          `${t.machineId} (speed: ${t.machineSpeed} sheets/hr) → ${t.assignedQty.toLocaleString()} pieces, ETA ${new Date(t.estimatedFinish).toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit" })}`
+          `${t.machineId} (speed: ${t.machineSpeed} jobs/hr) → ${t.assignedQty.toLocaleString()} pieces, ETA ${new Date(t.estimatedFinish).toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit" })}`
       )
       .join("; ");
 
@@ -61,78 +60,62 @@ Keep it to 2-3 direct sentences.`;
   }
 }
 
-
-function deterministicRisk(order: Order, schedule: ScheduleResult): RiskAnalysis {
-  const diffMinutes = computeSlaDiffMinutes(order.deadline, schedule.overallFinish);
-
-  let calcRiskLevel: "LOW" | "MEDIUM" | "HIGH" = "LOW";
-  let calcRiskScore = 10;
-
-  if (diffMinutes < 0) {
-    calcRiskLevel = "HIGH";
-    calcRiskScore = Math.min(100, 75 + Math.abs(diffMinutes) / 2);
-  } else if (diffMinutes < 60) {
-    calcRiskLevel = "MEDIUM";
-    calcRiskScore = Math.max(30, 70 - diffMinutes / 2);
-  } else {
-    calcRiskLevel = "LOW";
-    calcRiskScore = Math.max(0, 20 - diffMinutes / 10);
-  }
-
-  calcRiskScore = Math.round(Number.isFinite(calcRiskScore) ? calcRiskScore : 50);
-
-  return {
-    riskScore: calcRiskScore,
-    riskLevel: calcRiskLevel,
-    anomalies: diffMinutes < 0 ? ["Estimated finish exceeds SLA deadline"] : [],
-    recommendation:
-      calcRiskLevel === "HIGH"
-        ? "SLA deadline is breached. Consider adding more machines or reducing order quantity."
-        : calcRiskLevel === "MEDIUM"
-          ? "SLA buffer is tight. Monitor closely."
-          : "Schedule looks healthy.",
-  };
-}
-
-function normalizeRiskAnalysis(raw: Partial<RiskAnalysis>, fallback: RiskAnalysis): RiskAnalysis {
-  const level = raw.riskLevel === "LOW" || raw.riskLevel === "MEDIUM" || raw.riskLevel === "HIGH"
-    ? raw.riskLevel
-    : fallback.riskLevel;
-  const score = Number.isFinite(raw.riskScore) ? Math.round(Math.min(100, Math.max(0, raw.riskScore!))) : fallback.riskScore;
-  const anomalies = Array.isArray(raw.anomalies)
-    ? raw.anomalies.filter((item): item is string => typeof item === "string").slice(0, 3)
-    : fallback.anomalies;
-  const recommendation =
-    typeof raw.recommendation === "string" && raw.recommendation.trim().length > 0
-      ? raw.recommendation.trim()
-      : fallback.recommendation;
-
-  return {
-    riskScore: score,
-    riskLevel: level,
-    anomalies,
-    recommendation,
-  };
-}
+import { differenceInMinutes } from "date-fns";
 
 export async function analyseRisk(
   order: Order,
   machines: Machine[],
   schedule: ScheduleResult
 ): Promise<RiskAnalysis> {
-  const fallback = deterministicRisk(order, schedule);
-  const calcRiskLevel = fallback.riskLevel;
-  const calcRiskScore = fallback.riskScore;
+  const deadline = new Date(order.deadline);
+  const overallFinish = new Date(schedule.overallFinish);
+  
+  // Calculate exact minutes between deadline and finish. 
+  // Positive means we finish BEFORE deadline (buffer).
+  // Negative means we finish AFTER deadline (late).
+  const diffMinutes = differenceInMinutes(deadline, overallFinish);
+  
+  // Determine risk level based on actual time difference
+  let calcRiskLevel: "LOW" | "MEDIUM" | "HIGH" = "LOW";
+  let calcRiskScore = 10;
+  
+  if (diffMinutes < 0) {
+    // We are late -> HIGH risk
+    calcRiskLevel = "HIGH";
+    // Score increases the later we are, up to 100
+    calcRiskScore = Math.min(100, 75 + Math.abs(diffMinutes) / 2);
+  } else if (diffMinutes < 60) {
+    // Within 60 minutes buffer -> MEDIUM risk
+    calcRiskLevel = "MEDIUM";
+    // Score gets closer to 70 as buffer gets smaller
+    calcRiskScore = Math.max(30, 70 - (diffMinutes / 2));
+  } else {
+    // Plentiful buffer -> LOW risk
+    calcRiskLevel = "LOW";
+    calcRiskScore = Math.max(0, 20 - (diffMinutes / 10));
+  }
+  
+  // Round score
+  calcRiskScore = Math.round(calcRiskScore);
+
+  const fallback: RiskAnalysis = {
+    riskScore: calcRiskScore,
+    riskLevel: calcRiskLevel,
+    anomalies: [],
+    recommendation: calcRiskLevel === "HIGH" ? "SLA deadline is breached. Consider adding more machines or reducing order quantity." : 
+                    calcRiskLevel === "MEDIUM" ? "SLA buffer is tight. Monitor closely." : 
+                    "Schedule looks healthy.",
+  };
 
   try {
     const model = getModel();
     if (!model) return fallback;
 
-    const machineSummary = (machines || [])
-      .map((m) => `${m.id}: status=${m.status || "unknown"}, speed=${m.speed || 0}, jobs_in_queue=${m.queue?.length || 0}, paperTypes=${(m.paperTypes || []).join("/")}`)
+    const machineSummary = machines
+      .map((m) => `${m.id}: status=${m.status}, speed=${m.speed}, jobs_in_queue=${m.queue?.length || 0}, paperTypes=${(m.paperTypes || []).join("/")}`)
       .join("\n");
 
-    const taskSummary = (schedule.tasks || [])
+    const taskSummary = schedule.tasks
       .map((t) => `${t.machineId}: ${t.assignedQty.toLocaleString()} pcs, ${t.estimatedHours}h`)
       .join(", ");
 
@@ -156,7 +139,7 @@ Return exactly this JSON. Ensure text fields are ultra-concise and strictly fact
     const response = await model.generateContent(prompt);
     const text = response.response.text().trim();
     const json = text.replace(/```json|```/g, "").trim();
-    const parsed = normalizeRiskAnalysis(JSON.parse(json) as Partial<RiskAnalysis>, fallback);
+    const parsed = JSON.parse(json) as RiskAnalysis;
     
     // Enforce deterministic risk score and level overrides
     return {

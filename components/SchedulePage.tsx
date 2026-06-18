@@ -210,7 +210,7 @@ export function SchedulePage({ schedule, order, onApprovalDecision }: Props) {
             <div key={task.machineId} className="grid gap-3 px-5 py-4 md:grid-cols-[110px_1fr_130px_150px] md:items-center">
               <div>
                 <p className="text-sm font-semibold text-gray-900 dark:text-gray-100">{task.machineId}</p>
-                <p className="text-xs text-gray-500">{task.assignedQty.toLocaleString()} sheets</p>
+                <p className="text-xs text-gray-500">{task.assignedQty.toLocaleString()} jobs</p>
               </div>
               <div>
                 <div className="mb-1 flex items-center justify-between text-xs text-gray-500">

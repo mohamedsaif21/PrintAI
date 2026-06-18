@@ -48,7 +48,7 @@ export function DashboardPage({ orders, machines, lastSchedule, notifications }:
         <MetricCard label="Total orders" value={orders.length} sub={`${scheduled} active`} icon={FileText} color="bg-blue-500" />
         <MetricCard label="Active machines" value={active} sub={`${machines.filter(m=>m.status==='busy').length} busy · ${machines.filter(m=>m.status==='backup').length} backup`} icon={Cpu} color="bg-violet-500" />
         <MetricCard label="SLA compliance" value={slaRisk === 0 ? "100%" : `${Math.round(((orders.length - slaRisk) / orders.length) * 100)}%`} sub={slaRisk === 0 ? "All on track" : `${slaRisk} at risk`} icon={CheckCircle2} color="bg-emerald-500" />
-        <MetricCard label="Sheets scheduled" value={orders.reduce((s, o) => s + o.quantity, 0).toLocaleString()} sub="across all orders" icon={Clock} color="bg-amber-500" />
+        <MetricCard label="Jobs scheduled" value={orders.reduce((s, o) => s + o.quantity, 0).toLocaleString()} sub="across all orders" icon={Clock} color="bg-amber-500" />
       </div>
 
       {/* Notifications */}

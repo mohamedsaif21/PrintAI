@@ -193,7 +193,7 @@ The system strictly separates **Deterministic Logic** from **AI Interpretation**
 | id         | text PK     | e.g. `ORD-A1B2C3`                                                          |
 | customer   | text        |                                                                            |
 | product    | text        | Brochure, Flyer, etc.                                                      |
-| quantity   | integer     | sheets                                                                     |
+| quantity   | integer     | jobs                                                                     |
 | paper_type | text        | Coated / Glossy / Matte / Uncoated                                         |
 | priority   | text        | High / Medium / Low                                                        |
 | deadline   | timestamptz |                                                                            |
@@ -213,8 +213,8 @@ Risk is calculated mathematically based on the buffer between the scheduled fini
 | Column      | Type    | Notes                                 |
 | ----------- | ------- | ------------------------------------- |
 | id          | text PK | M1–M5                                 |
-| speed       | integer | sheets/hour                           |
-| capacity    | integer | sheets/day                            |
+| speed       | integer | jobs/hour                           |
+| capacity    | integer | jobs/day                            |
 | status      | text    | available / busy / backup / breakdown |
 | paper_types | text[]  | supported paper types                 |
 | utilisation | integer | 0–100                                 |
@@ -273,7 +273,7 @@ Once the mathematical risk (`LOW` / `MEDIUM` / `HIGH`) and score are generated, 
 1. **Machine Breakdown & Auto-Recovery:**
    - Triggered manually via the UI.
    - Immediately halts the active machine (`breakdown` status).
-   - Calculates the exact remaining unprinted sheets.
+   - Calculates the exact remaining unprinted jobs.
    - Reassigns the remaining workload to the backup machine (`M5`).
 2. **Human-in-the-Loop Order Rejection:**
    - Supervisors can explicitly `Reject` a schedule in the `Pending Approval` stage.
