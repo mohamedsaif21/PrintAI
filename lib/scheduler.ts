@@ -1,6 +1,6 @@
 import { Machine, Order, ScheduleResult, ScheduledTask, QueuedJob, PreemptionEvent } from "@/types";
-import { differenceInMinutes } from "date-fns";
 import { computeRealFinish } from "@/lib/timeEngine";
+import { computeSlaStatus, distributeQuantity, maxTimestamp, safeFactoryHours, toTimestamp } from "@/lib/safeMath";
 import { v4 as uuidv4 } from "uuid";
 import { resolveMachineConflict, buildJob, priorityBeats, resumeNextIfPaused } from "@/lib/priorityEngine";
 
@@ -20,11 +20,16 @@ export const DEFAULT_MACHINES: Machine[] = [
   { id: "M5", speed: 300, capacity: 6000,  status: "backup",    paperTypes: MACHINE_PAPER_TYPES.M5, utilisation: 0, queue: [], stateHistory: [], shiftStartTime: new Date().toISOString() },
 ];
 
-export function normaliseMachine(machine: Machine): Machine {
+export function normaliseMachine(machine: Machine | null | undefined): Machine {
+  if (!machine) {
+    return { ...DEFAULT_MACHINES[0], queue: [], stateHistory: [] };
+  }
   return {
     ...machine,
-    paperTypes: MACHINE_PAPER_TYPES[machine.id] || machine.paperTypes,
+    paperTypes: MACHINE_PAPER_TYPES[machine.id] || machine.paperTypes || [],
     queue: machine.queue || [],
+    status: machine.status || "available",
+    utilisation: Number.isFinite(machine.utilisation) ? machine.utilisation : 0,
   };
 }
 
@@ -46,9 +51,12 @@ export function orderFromQueueJob(job: QueuedJob, machine: Machine): Order {
     job.orderId === SEED_M2_ORDER_ID
       ? SEED_M2_ORDER_META
       : { customer: "In-house", product: `Production (${job.orderId})` };
-  const startMs = new Date(job.startedAt).getTime();
-  const finishMs = new Date(job.realFinishAt).getTime();
-  const deadlineMs = finishMs + Math.max(finishMs - startMs, 60_000) * 0.5;
+  const startMs = toTimestamp(job.startedAt);
+  const finishMs = toTimestamp(job.realFinishAt);
+  const deadlineMs =
+    startMs !== null && finishMs !== null
+      ? finishMs + Math.max(finishMs - startMs, 60_000) * 0.5
+      : Date.now() + 3_600_000;
 
   return {
     id: job.orderId,
@@ -86,17 +94,18 @@ export function scheduleFromQueues(
 
   if (tasks.length === 0) return null;
 
-  const overallFinishMs = Math.max(...tasks.map((t) => new Date(t.estimatedFinish).getTime()));
+  const overallFinishMs = maxTimestamp(...tasks.map((t) => t.estimatedFinish));
+  if (overallFinishMs === null) return null;
+
   const overallFinish = new Date(overallFinishMs).toISOString();
-  const deadline = orderDeadline ? new Date(orderDeadline) : new Date(overallFinishMs + 3_600_000);
-  const diffMinutes = differenceInMinutes(deadline, new Date(overallFinish));
+  const { slaStatus, slaDiff } = computeSlaStatus(orderDeadline, overallFinish);
 
   return {
     orderId,
     tasks,
     overallFinish,
-    slaStatus: diffMinutes >= 0 ? "SAFE" : "RISK",
-    slaDiff: diffMinutes,
+    slaStatus,
+    slaDiff,
   };
 }
 
@@ -186,35 +195,54 @@ export function runScheduler(order: Order, machines: Machine[]): ScheduleResult 
     throw new Error(`No production machine is currently able to schedule ${order.paperType} work.`);
   }
 
-  const totalSpeed = eligible.reduce((sum, m) => sum + m.speed, 0);
+  if (order.quantity <= 0) {
+    throw new Error("Order quantity must be greater than zero.");
+  }
+
+  const shares = distributeQuantity(
+    order.quantity,
+    eligible.map((m) => m.speed),
+  );
   const now = new Date();
 
-  const tasks: ScheduledTask[] = eligible.map((m) => {
-    const share = Math.round((m.speed / totalSpeed) * order.quantity);
-    const factoryHours = share / m.speed; // "factory time" hours
-    const runningJob = m.queue.find((job) => job.status === "running");
-    const canPreempt = runningJob ? priorityBeats(order.priority, runningJob.priority) : false;
-    const startAt = m.status === "busy" && !canPreempt ? queueReadyAt(m, now) : now;
-    const realFinish = computeRealFinish(startAt, factoryHours);
-    return {
-      machineId: m.id,
-      machineSpeed: m.speed,
-      assignedQty: share,
-      estimatedHours: parseFloat(factoryHours.toFixed(2)),
-      estimatedFinish: realFinish.toISOString(),
-    };
-  });
+  const tasks: ScheduledTask[] = eligible
+    .map((m, index) => {
+      const share = shares[index] ?? 0;
+      if (share <= 0) return null;
 
-  const overallFinish = new Date(Math.max(...tasks.map((t) => new Date(t.estimatedFinish).getTime())));
-  const deadline = new Date(order.deadline);
-  const diffMinutes = differenceInMinutes(deadline, overallFinish);
+      const factoryHours = safeFactoryHours(share, m.speed);
+      const runningJob = m.queue.find((job) => job.status === "running");
+      const canPreempt = runningJob ? priorityBeats(order.priority, runningJob.priority) : false;
+      const startAt = m.status === "busy" && !canPreempt ? queueReadyAt(m, now) : now;
+      const realFinish = computeRealFinish(startAt, factoryHours);
+      return {
+        machineId: m.id,
+        machineSpeed: m.speed,
+        assignedQty: share,
+        estimatedHours: parseFloat(factoryHours.toFixed(2)),
+        estimatedFinish: realFinish.toISOString(),
+      };
+    })
+    .filter((task): task is ScheduledTask => task !== null);
+
+  if (tasks.length === 0) {
+    throw new Error(`No production machine could accept a workload split for ${order.paperType}.`);
+  }
+
+  const overallFinishMs = maxTimestamp(...tasks.map((t) => t.estimatedFinish));
+  if (overallFinishMs === null) {
+    throw new Error("Unable to compute schedule finish time.");
+  }
+
+  const overallFinish = new Date(overallFinishMs).toISOString();
+  const { slaStatus, slaDiff } = computeSlaStatus(order.deadline, overallFinish);
 
   return {
     orderId: order.id,
     tasks,
-    overallFinish: overallFinish.toISOString(),
-    slaStatus: diffMinutes >= 0 ? "SAFE" : "RISK",
-    slaDiff: diffMinutes,
+    overallFinish,
+    slaStatus,
+    slaDiff,
   };
 }
 
@@ -270,7 +298,7 @@ export function dispatchScheduleToMachines(
  * (one that was preempted earlier) with its frozen remaining duration.
  * Returns { machines, justCompleted } so the caller can update order statuses.
  */
-export function tickMachines(machines: Machine[]): {
+export function tickMachines(machines: Machine[], orders: Order[] = []): {
   machines: Machine[];
   justCompleted: { orderId: string; machineId: string; jobId: string }[];
 } {
@@ -286,6 +314,30 @@ export function tickMachines(machines: Machine[]): {
     }
 
     const current = m.queue[0];
+
+    // Freeze time for jobs whose order is still Pending Approval
+    const order = orders.find((o) => o.id === current.orderId);
+    if (order && order.status === "Pending Approval") {
+      if (current.status === "running") {
+        const startMs = new Date(current.startedAt).getTime();
+        const finishMs = new Date(current.realFinishAt).getTime();
+        const duration = Math.max(0, finishMs - startMs);
+
+        // Push the timestamps forward so it doesn't accumulate progress while waiting
+        const frozenJob = {
+          ...current,
+          startedAt: new Date().toISOString(),
+          realFinishAt: new Date(Date.now() + duration).toISOString(),
+        };
+        return {
+          ...m,
+          queue: [frozenJob, ...m.queue.slice(1)],
+          assignedOrderId: frozenJob.orderId,
+        };
+      }
+      if (m.assignedOrderId !== current.orderId) return { ...m, assignedOrderId: current.orderId };
+      return m;
+    }
 
     // queue[0] should always be the active slot: either "running" (in progress)
     // or "paused" (meaning nothing is currently running on this machine and
@@ -347,18 +399,37 @@ export function simulateBreakdown(
   machines: Machine[],
   order: Order
 ): { newTasks: ScheduledTask[]; result: ScheduleResult } {
+  const fraction = Math.min(1, Math.max(0, completedFraction));
   const failedTask = originalTasks.find((t) => t.machineId === failedMachineId);
   if (!failedTask) throw new Error("Machine not found in tasks");
 
-  const remainingQty = Math.round(failedTask.assignedQty * (1 - completedFraction));
+  const remainingQty = Math.max(0, Math.round(failedTask.assignedQty * (1 - fraction)));
+  const survivingTasks = originalTasks.filter((t) => t.machineId !== failedMachineId);
+
+  if (remainingQty <= 0) {
+    const overallFinishMs = maxTimestamp(...survivingTasks.map((t) => t.estimatedFinish));
+    const overallFinish = overallFinishMs !== null ? new Date(overallFinishMs).toISOString() : new Date().toISOString();
+    const { slaStatus, slaDiff } = computeSlaStatus(order.deadline, overallFinish);
+    return {
+      newTasks: survivingTasks,
+      result: {
+        orderId: order.id,
+        tasks: survivingTasks,
+        overallFinish,
+        slaStatus,
+        slaDiff,
+      },
+    };
+  }
+
   const backup = machines.find((m) => m.status === "backup");
   if (!backup) throw new Error("No backup machine available");
 
-  const backupHours = remainingQty / backup.speed;
+  const backupHours = safeFactoryHours(remainingQty, backup.speed);
   const backupFinish = computeRealFinish(new Date(), backupHours);
 
   const newTasks: ScheduledTask[] = [
-    ...originalTasks.filter((t) => t.machineId !== failedMachineId),
+    ...survivingTasks,
     {
       machineId: backup.id,
       machineSpeed: backup.speed,
@@ -368,18 +439,18 @@ export function simulateBreakdown(
     },
   ];
 
-  const overallFinish = new Date(Math.max(...newTasks.map((t) => new Date(t.estimatedFinish).getTime())));
-  const deadline = new Date(order.deadline);
-  const diffMinutes = differenceInMinutes(deadline, overallFinish);
+  const overallFinishMs = maxTimestamp(...newTasks.map((t) => t.estimatedFinish));
+  const overallFinish = overallFinishMs !== null ? new Date(overallFinishMs).toISOString() : backupFinish.toISOString();
+  const { slaStatus, slaDiff } = computeSlaStatus(order.deadline, overallFinish);
 
   return {
     newTasks,
     result: {
       orderId: order.id,
       tasks: newTasks,
-      overallFinish: overallFinish.toISOString(),
-      slaStatus: diffMinutes >= 0 ? "SAFE" : "RISK",
-      slaDiff: diffMinutes,
+      overallFinish,
+      slaStatus,
+      slaDiff,
     },
   };
 }

@@ -1,8 +1,8 @@
 import { Machine, Order, ScheduleResult, ScheduledTask, Priority, PreemptionEvent, QueuedJob } from "@/types";
-import { differenceInMinutes } from "date-fns";
 import { computeRealFinish, remainingFactoryHours } from "@/lib/timeEngine";
 import { normaliseMachine } from "@/lib/scheduler";
 import { buildJob, priorityBeats } from "@/lib/priorityEngine";
+import { computeSlaStatus, distributeQuantity, maxTimestamp, safeDivide, safeFactoryHours } from "@/lib/safeMath";
 
 interface WhatIfResult {
   success: boolean;
@@ -150,36 +150,46 @@ function tryNormalScheduling(
 
   // Sort by speed (faster machines first)
   const sorted = [...availableMachines].sort((a, b) => b.speed - a.speed);
-  const totalSpeed = sorted.reduce((sum, m) => sum + m.speed, 0);
+  const shares = distributeQuantity(order.quantity, sorted.map((m) => m.speed));
   const now = new Date();
 
-  let remainingQty = order.quantity;
-  const tasks: ScheduledTask[] = sorted.map((m, index) => {
-    const isLast = index === sorted.length - 1;
-    const share = isLast ? remainingQty : Math.round((m.speed / totalSpeed) * order.quantity);
-    remainingQty -= share;
-    const factoryHours = share / m.speed;
-    const realFinish = computeRealFinish(now, factoryHours);
+  const tasks: ScheduledTask[] = sorted
+    .map((m, index) => {
+      const share = shares[index] ?? 0;
+      if (share <= 0) return null;
+      const factoryHours = safeFactoryHours(share, m.speed);
+      const realFinish = computeRealFinish(now, factoryHours);
+      return {
+        machineId: m.id,
+        machineSpeed: m.speed,
+        assignedQty: share,
+        estimatedHours: parseFloat(factoryHours.toFixed(2)),
+        estimatedFinish: realFinish.toISOString(),
+      };
+    })
+    .filter((task): task is ScheduledTask => task !== null);
 
+  if (tasks.length === 0) {
     return {
-      machineId: m.id,
-      machineSpeed: m.speed,
-      assignedQty: share,
-      estimatedHours: parseFloat(factoryHours.toFixed(2)),
-      estimatedFinish: realFinish.toISOString(),
+      success: false,
+      scheduleResult: undefined,
+      updatedMachines: undefined,
+      warnings: ["No machine received a positive workload share"],
+      preemptionEvents: [],
+      passUsed: 1,
     };
-  });
+  }
 
-  const overallFinish = new Date(Math.max(...tasks.map((t) => new Date(t.estimatedFinish).getTime())));
-  const deadline = new Date(order.deadline);
-  const diffMinutes = differenceInMinutes(deadline, overallFinish);
+  const overallFinishMs = maxTimestamp(...tasks.map((t) => t.estimatedFinish));
+  const overallFinish = overallFinishMs !== null ? new Date(overallFinishMs).toISOString() : now.toISOString();
+  const { slaStatus, slaDiff } = computeSlaStatus(order.deadline, overallFinish);
 
   const scheduleResult: ScheduleResult = {
     orderId: order.id,
     tasks,
-    overallFinish: overallFinish.toISOString(),
-    slaStatus: diffMinutes >= 0 ? "SAFE" : "RISK",
-    slaDiff: diffMinutes,
+    overallFinish,
+    slaStatus,
+    slaDiff,
   };
 
   // Create updated machines with new jobs in queue
@@ -224,7 +234,7 @@ function tryBackupScheduling(
   const warnings: string[] = [];
   const preemptionEvents: PreemptionEvent[] = [];
 
-  const factoryHours = order.quantity / m5.speed;
+  const factoryHours = safeFactoryHours(order.quantity, m5.speed);
   const now = new Date();
   const realFinish = computeRealFinish(now, factoryHours);
 
@@ -236,15 +246,14 @@ function tryBackupScheduling(
     estimatedFinish: realFinish.toISOString(),
   };
 
-  const deadline = new Date(order.deadline);
-  const diffMinutes = differenceInMinutes(deadline, realFinish);
+  const { slaStatus, slaDiff } = computeSlaStatus(order.deadline, realFinish.toISOString());
 
   const scheduleResult: ScheduleResult = {
     orderId: order.id,
     tasks: [task],
     overallFinish: realFinish.toISOString(),
-    slaStatus: diffMinutes >= 0 ? "SAFE" : "RISK",
-    slaDiff: diffMinutes,
+    slaStatus,
+    slaDiff,
   };
 
   const newJob = buildJob({
@@ -314,16 +323,16 @@ function tryPreemptionScheduling(
   // Calculate progress of the running job
   const startMs = new Date(runningJob.startedAt).getTime();
   const finishMs = new Date(runningJob.realFinishAt).getTime();
-  const totalDuration = finishMs - startMs;
+  const totalDuration = Math.max(1, finishMs - startMs);
   const elapsed = Math.max(0, now - startMs);
-  const completedFraction = Math.min(1, elapsed / totalDuration);
+  const completedFraction = Math.min(1, safeDivide(elapsed, totalDuration, 0));
 
   // Calculate completed and remaining quantities
   const completedQty = Math.floor(runningJob.assignedQty * completedFraction);
   const remainingQty = runningJob.assignedQty - completedQty;
 
   // Create the High Priority job
-  const highPriorityFactoryHours = order.quantity / targetMachine.speed;
+  const highPriorityFactoryHours = safeFactoryHours(order.quantity, targetMachine.speed);
   const highPriorityFinish = computeRealFinish(new Date(now), highPriorityFactoryHours);
   
   const highPriorityJob = buildJob({
@@ -336,7 +345,7 @@ function tryPreemptionScheduling(
   });
 
   // Create the resumed portion of the interrupted job
-  const remainingFactoryHours = remainingQty / targetMachine.speed;
+  const remainingFactoryHoursValue = safeFactoryHours(remainingQty, targetMachine.speed);
 
   const resumedJob: QueuedJob = {
     jobId: `${runningJob.jobId}-resumed`,
@@ -344,7 +353,7 @@ function tryPreemptionScheduling(
     machineId: runningJob.machineId,
     priority: runningJob.priority,
     assignedQty: remainingQty,
-    estimatedHours: parseFloat(remainingFactoryHours.toFixed(2)), // Frozen duration for resume
+    estimatedHours: parseFloat(remainingFactoryHoursValue.toFixed(2)), // Frozen duration for resume
     totalEstimatedHours: runningJob.totalEstimatedHours, // Keep original total
     startedAt: new Date(now).toISOString(), // Placeholder - will be recalculated on resume
     realFinishAt: new Date(now).toISOString(), // Placeholder - will be recalculated on resume
@@ -375,15 +384,14 @@ function tryPreemptionScheduling(
     estimatedFinish: highPriorityFinish.toISOString(),
   };
 
-  const deadline = new Date(order.deadline);
-  const diffMinutes = differenceInMinutes(deadline, highPriorityFinish);
+  const { slaStatus, slaDiff } = computeSlaStatus(order.deadline, highPriorityFinish.toISOString());
 
   const scheduleResult: ScheduleResult = {
     orderId: order.id,
     tasks: [task],
     overallFinish: highPriorityFinish.toISOString(),
-    slaStatus: diffMinutes >= 0 ? "SAFE" : "RISK",
-    slaDiff: diffMinutes,
+    slaStatus,
+    slaDiff,
   };
 
   // Update machines

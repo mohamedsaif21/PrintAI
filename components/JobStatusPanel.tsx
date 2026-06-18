@@ -2,8 +2,9 @@
 import React, { useEffect, useState } from "react";
 import { Order, ScheduleResult, Machine } from "@/types";
 import { Badge } from "@/components/ui/Badge";
-import { format, differenceInMinutes, differenceInDays } from "date-fns";
+import { format, differenceInDays, isValid } from "date-fns";
 import { Cpu, CalendarDays } from "lucide-react";
+import { clampProgress, safeDivide, toTimestamp } from "@/lib/safeMath";
 
 interface JobStatusPanelProps {
   order: Order;
@@ -13,6 +14,13 @@ interface JobStatusPanelProps {
 
 export function JobStatusPanel({ order, schedule, machines }: JobStatusPanelProps) {
   const [now, setNow] = useState(new Date());
+  const safeMachines = machines ?? [];
+
+  const formatSafeDate = (value: string | undefined, pattern: string, fallback = "TBD") => {
+    if (!value) return fallback;
+    const date = new Date(value);
+    return isValid(date) ? format(date, pattern) : fallback;
+  };
 
   // Auto-refresh the current time so the progress bar and time limits update smoothly
   useEffect(() => {
@@ -23,25 +31,26 @@ export function JobStatusPanel({ order, schedule, machines }: JobStatusPanelProp
   // 1. Progress Calculation (Deterministic — prefers live machine queue when available)
   const getProgress = () => {
     if (order.status === "Completed") {
-      return { percent: 100, completedSheets: order.quantity, totalSheets: order.quantity };
+      const total = Math.max(0, order.quantity);
+      return { percent: 100, completedSheets: total, totalSheets: total };
     }
     if (order.status === "Pending Approval" || order.status === "Pending" || order.status === "Rejected") {
       return { percent: 0, completedSheets: 0, totalSheets: order.quantity };
     }
 
-    const queueJobs = machines.flatMap((m) => m.queue.filter((j) => j.orderId === order.id));
+    const queueJobs = safeMachines.flatMap((m) => (m.queue ?? []).filter((j) => j.orderId === order.id));
     if (!schedule && queueJobs.length === 0) {
-      return { percent: 0, completedSheets: 0, totalSheets: order.quantity };
+      return { percent: 0, completedSheets: 0, totalSheets: Math.max(0, order.quantity) };
     }
 
     let completedSheets = 0;
     const currentMs = now.getTime();
-    const createdAt = new Date(order.createdAt).getTime();
+    const createdAt = toTimestamp(order.createdAt) ?? currentMs;
 
     const workItems = schedule
       ? schedule.tasks.map((task) => ({
           task,
-          queueJob: machines.find((m) => m.id === task.machineId)?.queue.find((j) => j.orderId === order.id),
+          queueJob: safeMachines.find((m) => m.id === task.machineId)?.queue?.find((j) => j.orderId === order.id),
         }))
       : queueJobs.map((queueJob) => ({
           task: {
@@ -53,29 +62,30 @@ export function JobStatusPanel({ order, schedule, machines }: JobStatusPanelProp
         }));
 
     workItems.forEach(({ task, queueJob }) => {
-
       if (queueJob?.status === "completed") {
-        completedSheets += queueJob.assignedQty;
+        completedSheets += Math.max(0, queueJob.assignedQty);
         return;
       }
 
       if (queueJob?.status === "running") {
-        const startMs = new Date(queueJob.startedAt).getTime();
-        const finishMs = new Date(queueJob.realFinishAt).getTime();
+        const startMs = toTimestamp(queueJob.startedAt);
+        const finishMs = toTimestamp(queueJob.realFinishAt);
+        if (startMs === null || finishMs === null) return;
         const totalMs = Math.max(1, finishMs - startMs);
         const elapsedMs = Math.max(0, Math.min(currentMs - startMs, totalMs));
-        completedSheets += Math.round(queueJob.assignedQty * (elapsedMs / totalMs));
+        completedSheets += Math.round(queueJob.assignedQty * safeDivide(elapsedMs, totalMs, 0));
         return;
       }
 
-      const finishMs = new Date(task.estimatedFinish).getTime();
+      const finishMs = toTimestamp(task.estimatedFinish);
+      if (finishMs === null) return;
       const totalMs = Math.max(1, finishMs - createdAt);
       const elapsedMs = Math.max(0, Math.min(currentMs - createdAt, totalMs));
-      completedSheets += Math.round(task.assignedQty * (elapsedMs / totalMs));
+      completedSheets += Math.round(task.assignedQty * safeDivide(elapsedMs, totalMs, 0));
     });
 
-    const percent = Math.min(100, Math.round((completedSheets / order.quantity) * 100));
-    return { percent, completedSheets, totalSheets: order.quantity };
+    const clamped = clampProgress(completedSheets, order.quantity);
+    return { percent: clamped.percent, completedSheets: clamped.completed, totalSheets: clamped.total };
   };
 
   const progress = getProgress();
@@ -90,21 +100,26 @@ export function JobStatusPanel({ order, schedule, machines }: JobStatusPanelProp
 
   // 2. Risk Calculation (Strict Logic, independent of AI)
   const getRiskStatus = () => {
-    const queueJobs = machines.flatMap((m) => m.queue.filter((j) => j.orderId === order.id));
-    const finishMs = schedule
-      ? new Date(schedule.overallFinish).getTime()
-      : queueJobs.length > 0
-        ? Math.max(...queueJobs.map((j) => new Date(j.realFinishAt).getTime()))
+    const queueJobs = safeMachines.flatMap((m) => (m.queue ?? []).filter((j) => j.orderId === order.id));
+    const queueFinishMs = queueJobs
+      .map((j) => toTimestamp(j.realFinishAt))
+      .filter((ms): ms is number => ms !== null);
+    const finishMs = schedule?.overallFinish
+      ? toTimestamp(schedule.overallFinish)
+      : queueFinishMs.length > 0
+        ? Math.max(...queueFinishMs)
         : null;
 
     if (finishMs === null) return { level: "SAFE", label: "SAFE (Unscheduled)" };
 
-    const startMs = new Date(order.createdAt).getTime();
-    const deadlineMs = new Date(order.deadline).getTime();
+    const deadlineMs = toTimestamp(order.deadline);
+    if (deadlineMs === null) return { level: "SAFE", label: "SAFE (No deadline)" };
+
     const delayMs = finishMs - deadlineMs;
 
     if (delayMs <= 0) return { level: "SAFE", label: "SAFE" };
-    const totalAllowedMs = deadlineMs - startMs;
+    const startMs = toTimestamp(order.createdAt) ?? deadlineMs;
+    const totalAllowedMs = Math.max(1, deadlineMs - startMs);
     if (delayMs > 0 && delayMs < totalAllowedMs * 0.2) return { level: "MEDIUM", label: "MEDIUM RISK" };
     return { level: "HIGH", label: "HIGH RISK" };
   };
@@ -113,10 +128,12 @@ export function JobStatusPanel({ order, schedule, machines }: JobStatusPanelProp
 
   // 3. Time Remaining Formatting
   const formatTimeRemaining = () => {
-    if (order.status === "Completed") return `Completed`;
-    
-    const target = new Date(order.deadline);
-    const diffMinutes = differenceInMinutes(target, now);
+    if (order.status === "Completed") return "Completed";
+
+    const deadlineMs = toTimestamp(order.deadline);
+    if (deadlineMs === null) return "Unknown";
+
+    const diffMinutes = Math.round((deadlineMs - now.getTime()) / 60_000);
 
     if (diffMinutes < 0) {
       const overdueHours = Math.floor(Math.abs(diffMinutes) / 60);
@@ -132,12 +149,11 @@ export function JobStatusPanel({ order, schedule, machines }: JobStatusPanelProp
     return `${hours}h ${mins}m left`;
   };
 
-  const ageDays = differenceInDays(now, new Date(order.createdAt));
+  const ageDays = Math.max(0, differenceInDays(now, new Date(toTimestamp(order.createdAt) ?? now.getTime())));
 
-  // 4. Extract active assigned machines
   const assignedMachines = schedule
-    ? machines.filter((m) => schedule.tasks.some((t) => t.machineId === m.id))
-    : machines.filter((m) => m.queue.some((j) => j.orderId === order.id && j.status !== "completed"));
+    ? safeMachines.filter((m) => schedule.tasks.some((t) => t.machineId === m.id))
+    : safeMachines.filter((m) => (m.queue ?? []).some((j) => j.orderId === order.id && j.status !== "completed"));
 
   return (
     <div className="flex flex-col space-y-6 bg-white dark:bg-gray-900 p-6 rounded-xl border border-gray-200 dark:border-gray-800 shadow-sm">
@@ -192,17 +208,52 @@ export function JobStatusPanel({ order, schedule, machines }: JobStatusPanelProp
           </h3>
           {assignedMachines.length > 0 ? (
             <div className="space-y-3">
-              {assignedMachines.map(m => (
-                <div key={m.id} className="flex justify-between items-center p-3 bg-gray-50 dark:bg-gray-800/50 border border-gray-100 dark:border-gray-800 rounded-lg">
-                  <div>
-                    <p className="text-sm font-bold text-gray-900 dark:text-gray-100">{m.id}</p>
-                    <p className="text-xs text-gray-500">Speed: {m.speed.toLocaleString()} / hr</p>
+              {assignedMachines.map(m => {
+                const otherJobs = (m.queue || []).filter(j => j.orderId !== order.id && (j.status === "queued" || j.status === "paused"));
+                
+                return (
+                  <div key={m.id} className="flex flex-col p-3 bg-gray-50 dark:bg-gray-800/50 border border-gray-100 dark:border-gray-800 rounded-lg">
+                    <div className="flex justify-between items-center">
+                      <div>
+                        <p className="text-sm font-bold text-gray-900 dark:text-gray-100">{m.id}</p>
+                        <p className="text-xs text-gray-500">Speed: {m.speed.toLocaleString()} / hr</p>
+                      </div>
+                      <Badge variant={(m.status ?? "available") === "busy" ? "safe" : m.status === "breakdown" ? "risk" : "gray"}>
+                        {(m.status ?? "unknown").toUpperCase()}
+                      </Badge>
+                    </div>
+                    {otherJobs.length > 0 && (
+                      <div className="mt-3 pt-3 border-t border-gray-200 dark:border-gray-700">
+                        <p className="text-xs font-semibold text-gray-500 mb-2">Machine Queue Details</p>
+                        <div className="space-y-2">
+                          {otherJobs.map((j, idx) => {
+                            const isPaused = j.status === "paused";
+                            const pct = isPaused && j.totalEstimatedHours > 0 
+                              ? Math.round((1 - j.estimatedHours / j.totalEstimatedHours) * 100) 
+                              : 0;
+                            return (
+                              <div key={`${j.jobId}-${idx}`} className="flex justify-between items-start text-xs">
+                                <div className="flex flex-col">
+                                  <span className="text-gray-700 dark:text-gray-300 font-medium">Order {j.orderId}</span>
+                                  <span className="text-gray-500">{j.assignedQty.toLocaleString()} sheets</span>
+                                </div>
+                                <div className="flex flex-col items-end">
+                                  <span className={`font-medium ${isPaused ? 'text-amber-600' : 'text-blue-600'}`}>
+                                    {isPaused ? 'Paused' : 'Queued'}
+                                  </span>
+                                  {isPaused && pct > 0 && (
+                                    <span className="text-[10px] text-amber-600">({pct}% done)</span>
+                                  )}
+                                </div>
+                              </div>
+                            );
+                          })}
+                        </div>
+                      </div>
+                    )}
                   </div>
-                  <Badge variant={m.status === "busy" ? "safe" : m.status === "breakdown" ? "risk" : "gray"}>
-                    {m.status.toUpperCase()}
-                  </Badge>
-                </div>
-              ))}
+                );
+              })}
             </div>
           ) : (
             <div className="p-3 bg-gray-50 dark:bg-gray-800/50 border border-gray-100 dark:border-gray-800 rounded-lg text-sm text-gray-500 flex items-center justify-center italic">
@@ -219,26 +270,27 @@ export function JobStatusPanel({ order, schedule, machines }: JobStatusPanelProp
           <div className="bg-gray-50 dark:bg-gray-800/50 p-4 border border-gray-100 dark:border-gray-800 rounded-lg space-y-3">
             <div className="flex justify-between text-sm">
               <span className="text-gray-500">Start Date:</span>
-              <span className="font-medium text-gray-900 dark:text-gray-100">{format(new Date(order.createdAt), "MMM d, h:mm a")}</span>
+              <span className="font-medium text-gray-900 dark:text-gray-100">{formatSafeDate(order.createdAt, "MMM d, h:mm a")}</span>
             </div>
             <div className="flex justify-between text-sm">
               <span className="text-gray-500">Estimated Finish:</span>
               <span className="font-medium text-gray-900 dark:text-gray-100">
-                {schedule
-                  ? format(new Date(schedule.overallFinish), "MMM d, h:mm a")
+                {schedule?.overallFinish
+                  ? formatSafeDate(schedule.overallFinish, "MMM d, h:mm a")
                   : (() => {
-                      const finishes = machines
-                        .flatMap((m) => m.queue.filter((j) => j.orderId === order.id))
-                        .map((j) => new Date(j.realFinishAt).getTime());
+                      const finishes = safeMachines
+                        .flatMap((m) => (m.queue ?? []).filter((j) => j.orderId === order.id))
+                        .map((j) => toTimestamp(j.realFinishAt))
+                        .filter((ms): ms is number => ms !== null);
                       return finishes.length > 0
-                        ? format(new Date(Math.max(...finishes)), "MMM d, h:mm a")
+                        ? formatSafeDate(new Date(Math.max(...finishes)).toISOString(), "MMM d, h:mm a")
                         : "TBD";
                     })()}
               </span>
             </div>
             <div className="flex justify-between text-sm">
               <span className="text-gray-500">SLA Deadline:</span>
-              <span className="font-medium text-gray-900 dark:text-gray-100">{format(new Date(order.deadline), "MMM d, h:mm a")}</span>
+              <span className="font-medium text-gray-900 dark:text-gray-100">{formatSafeDate(order.deadline, "MMM d, h:mm a")}</span>
             </div>
             
             <div className="border-t border-gray-200 dark:border-gray-700 my-2" />

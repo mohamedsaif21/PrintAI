@@ -6,7 +6,7 @@
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
-    "lint": "eslint"
+    "test:edge": "npx tsx scripts/edge-case-tests.ts"
   },
   "dependencies": {
     "@google/generative-ai": "^0.24.1",

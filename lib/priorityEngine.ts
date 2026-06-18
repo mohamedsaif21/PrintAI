@@ -54,16 +54,17 @@ export function buildJob(params: {
   factoryHours: number;
   status: QueuedJob["status"];
 }): QueuedJob {
+  const factoryHours = Math.max(0, params.factoryHours);
   const startedAt = new Date();
-  const realFinishAt = computeRealFinish(startedAt, params.factoryHours);
+  const realFinishAt = computeRealFinish(startedAt, factoryHours);
   return {
     jobId: uuidv4().slice(0, 8),
     orderId: params.orderId,
     machineId: params.machineId,
     priority: params.priority,
     assignedQty: params.assignedQty,
-    estimatedHours: parseFloat(params.factoryHours.toFixed(2)),
-    totalEstimatedHours: parseFloat(params.factoryHours.toFixed(2)),
+    estimatedHours: parseFloat(factoryHours.toFixed(2)),
+    totalEstimatedHours: parseFloat(factoryHours.toFixed(2)),
     startedAt: startedAt.toISOString(),
     realFinishAt: realFinishAt.toISOString(),
     status: params.status,

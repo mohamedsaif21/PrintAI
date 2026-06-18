@@ -74,8 +74,16 @@ export default function Home() {
 
   useEffect(() => {
     const id = setInterval(() => {
-      const { machines: updatedMachines, justCompleted } = tickMachines(machinesRef.current);
-      if (justCompleted.length === 0) return;
+      const { machines: updatedMachines, justCompleted } = tickMachines(machinesRef.current, ordersRef.current);
+      
+      if (justCompleted.length === 0) {
+        let hasChanges = false;
+        for (let i = 0; i < machinesRef.current.length; i++) {
+          if (machinesRef.current[i] !== updatedMachines[i]) hasChanges = true;
+        }
+        if (hasChanges) setMachines(updatedMachines);
+        return;
+      }
 
       const completedByOrder = justCompleted.reduce<Record<string, string[]>>((acc, item) => {
         acc[item.orderId] = [...(acc[item.orderId] || []), item.machineId];

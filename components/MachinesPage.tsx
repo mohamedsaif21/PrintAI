@@ -656,17 +656,24 @@ function MachineDetail({
                       <span className={`text-xs font-medium ${job.status === "Completed" ? "text-emerald-600" : "text-amber-600"}`}>{job.status}</span>
                     </div>
                   ))}
-                  {machine.queue.filter((job) => job.status === "queued").length > 0 && (
+                  {machine.queue.filter((job) => job.status === "queued" || job.status === "paused").length > 0 && (
                     <div className="pt-3 mt-3 border-t border-gray-200 dark:border-gray-700">
-                      <p className="text-xs font-medium text-gray-500 uppercase mb-2">Queued Jobs</p>
-                      {machine.queue.filter((job) => job.status === "queued").map((job, index) => (
-                        <div key={`queued-${index}`} className="grid grid-cols-4 py-2 text-sm">
-                          <span className="text-gray-500">Pending</span>
-                          <span className="text-gray-800 dark:text-gray-200">Order {job.orderId}</span>
-                          <span className="text-gray-600 dark:text-gray-400">{job.assignedQty.toLocaleString()}</span>
-                          <span className="text-xs font-medium text-blue-600">Queued</span>
-                        </div>
-                      ))}
+                      <p className="text-xs font-medium text-gray-500 uppercase mb-2">Upcoming & Paused Jobs</p>
+                      {machine.queue.filter((job) => job.status === "queued" || job.status === "paused").map((job, index) => {
+                        const isPaused = job.status === "paused";
+                        const pct = job.totalEstimatedHours > 0 ? Math.round((1 - job.estimatedHours / job.totalEstimatedHours) * 100) : 0;
+                        return (
+                          <div key={`queued-${index}`} className="grid grid-cols-4 py-2 text-sm items-center">
+                            <span className="text-gray-500">{isPaused ? "Paused" : "Pending"}</span>
+                            <span className="text-gray-800 dark:text-gray-200">Order {job.orderId}</span>
+                            <div className="flex flex-col">
+                              <span className="text-gray-600 dark:text-gray-400">{job.assignedQty.toLocaleString()}</span>
+                              {isPaused && pct > 0 && <span className="text-[10px] leading-tight text-amber-600">({pct}% done)</span>}
+                            </div>
+                            <span className={`text-xs font-medium ${isPaused ? "text-amber-600" : "text-blue-600"}`}>{isPaused ? "Preempted" : "Queued"}</span>
+                          </div>
+                        );
+                      })}
                     </div>
                   )}
                 </div>
@@ -847,9 +854,16 @@ export function MachinesPage({ machines, orders, lastSchedule, onFailure, onRese
               )}
               <LiveJobProgress machine={machine} />
               {machine.queue.length > 1 && (
-                <p className="mt-1 text-xs text-amber-600 dark:text-amber-400">
-                  {machine.queue.length - 1} queued behind current job
-                </p>
+                <div className="mt-1 flex flex-col gap-0.5">
+                  <p className="text-xs text-amber-600 dark:text-amber-400">
+                    {machine.queue.length - 1} queued behind current job
+                  </p>
+                  {machine.queue.some((j) => j.status === "paused") && (
+                    <p className="text-xs font-medium text-red-500">
+                      Contains paused/preempted work
+                    </p>
+                  )}
+                </div>
               )}
             </button>
           );

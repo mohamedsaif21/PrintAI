@@ -17,7 +17,9 @@ export const REAL_SECONDS_PER_FACTORY_HOUR =
 
 /** Convert a factory-time duration (in hours) into real milliseconds for the demo clock. */
 export function factoryHoursToRealMs(factoryHours: number): number {
-  return factoryHours * REAL_SECONDS_PER_FACTORY_HOUR * 1000;
+  const safeHours = Math.max(0, factoryHours);
+  if (!Number.isFinite(safeHours)) return 0;
+  return safeHours * REAL_SECONDS_PER_FACTORY_HOUR * 1000;
 }
 
 /** Convert real elapsed milliseconds back into factory hours (for progress displays). */
@@ -35,6 +37,8 @@ export function jobProgressPercent(startedAt: string, realFinishAt: string): num
   const start = new Date(startedAt).getTime();
   const finish = new Date(realFinishAt).getTime();
   const now = Date.now();
+  if (!Number.isFinite(start) || !Number.isFinite(finish)) return 0;
+  if (finish <= start) return now >= finish ? 100 : 0;
   if (now >= finish) return 100;
   if (now <= start) return 0;
   return Math.round(((now - start) / (finish - start)) * 100);
