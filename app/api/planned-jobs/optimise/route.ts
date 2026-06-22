@@ -14,7 +14,8 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ suggestions: [] });
     }
 
-    const model = genAI.getGenerativeModel({ model: "gemini-1.5-flash" });
+    const modelName = process.env.GEMINI_MODEL || "gemini-2.5-flash";
+    const model = genAI.getGenerativeModel({ model: modelName });
 
     const jobSummary = jobs
       .map(

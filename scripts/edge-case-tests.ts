@@ -171,6 +171,150 @@ async function run() {
   const normalized = normaliseMachine({ ...DEFAULT_MACHINES[0], queue: undefined as unknown as [] });
   check("Normalise machine", Array.isArray(normalized.queue), `queue length=${normalized.queue.length}`);
 
+  // ── NEW EDGE CASES ──────────────────────────────────────────────────────
+
+  // SAFEMATH: clamp with NaN returns min
+  const { clamp: clampFn, safeDivide: safeDivideFn, safeFactoryHours: safeFactoryHoursFn, maxTimestamp: maxTimestampFn, computeSlaDiffMinutes } = await import("../lib/safeMath");
+  const clampNaN = clampFn(NaN, 0, 100);
+  check("Clamp NaN returns min", clampNaN === 0, `result=${clampNaN}`);
+
+  // SAFEMATH: clamp with Infinity
+  const clampInf = clampFn(Infinity, 0, 100);
+  check("Clamp Infinity returns min", clampInf === 0, `result=${clampInf}`);
+
+  // SAFEMATH: safeDivide by zero returns fallback
+  const divZero = safeDivideFn(100, 0, -1);
+  check("SafeDivide by zero", divZero === -1, `result=${divZero}`);
+
+  // SAFEMATH: safeDivide with NaN numerator
+  const divNaN = safeDivideFn(NaN, 10, 42);
+  check("SafeDivide NaN numerator", divNaN === 42, `result=${divNaN}`);
+
+  // SAFEMATH: safeFactoryHours with zero speed floors to 1
+  const zeroSpeedHours = safeFactoryHoursFn(1000, 0);
+  check("SafeFactoryHours zero speed", zeroSpeedHours === 1000, `result=${zeroSpeedHours}`);
+
+  // SAFEMATH: safeFactoryHours with negative qty clamps to 0
+  const negQtyHours = safeFactoryHoursFn(-500, 100);
+  check("SafeFactoryHours negative qty", negQtyHours === 0, `result=${negQtyHours}`);
+
+  // SAFEMATH: maxTimestamp with all null returns null
+  const maxNull = maxTimestampFn(null, undefined, null);
+  check("MaxTimestamp all null", maxNull === null, `result=${maxNull}`);
+
+  // SAFEMATH: maxTimestamp picks the latest
+  const t1 = "2026-01-01T00:00:00Z";
+  const t2 = "2026-06-15T12:00:00Z";
+  const t3 = "2026-03-10T06:00:00Z";
+  const maxTs = maxTimestampFn(t1, t2, t3);
+  check("MaxTimestamp picks latest", maxTs === new Date(t2).getTime(), `result=${maxTs}`);
+
+  // SAFEMATH: computeSlaDiffMinutes with both null
+  const slaDiffNull = computeSlaDiffMinutes(null, null);
+  check("SLA diff both null", slaDiffNull === 0, `result=${slaDiffNull}`);
+
+  // SAFEMATH: distributeQuantity with empty weights
+  const emptyDistribute = distributeQuantity(100, []);
+  check("Distribute empty weights", emptyDistribute.length === 0, `result=[${emptyDistribute}]`);
+
+  // SAFEMATH: distributeQuantity with zero total
+  const zeroDistribute = distributeQuantity(0, [100, 200]);
+  check("Distribute zero qty", zeroDistribute.every(s => s === 0), `result=[${zeroDistribute}]`);
+
+  // TIME ENGINE: factoryHoursToRealMs and roundtrip
+  const { factoryHoursToRealMs, realMsToFactoryHours, isJobFinished: isJobFinishedFn, remainingFactoryHours: remainingFHFn } = await import("../lib/timeEngine");
+  const realMs = factoryHoursToRealMs(2);
+  const roundtrip = realMsToFactoryHours(realMs);
+  check("Time engine roundtrip", Math.abs(roundtrip - 2) < 0.001, `input=2h, roundtrip=${roundtrip}`);
+
+  // TIME ENGINE: factoryHoursToRealMs negative input clamps to 0
+  const negMs = factoryHoursToRealMs(-5);
+  check("FactoryHours negative clamps to 0", negMs === 0, `result=${negMs}`);
+
+  // TIME ENGINE: isJobFinished for past time
+  const pastFinish = isJobFinishedFn(new Date(Date.now() - 10_000).toISOString());
+  check("IsJobFinished past time", pastFinish === true, `result=${pastFinish}`);
+
+  // TIME ENGINE: isJobFinished for future time
+  const futureFinish = isJobFinishedFn(new Date(Date.now() + 60_000).toISOString());
+  check("IsJobFinished future time", futureFinish === false, `result=${futureFinish}`);
+
+  // TIME ENGINE: remainingFactoryHours for already-finished job
+  const finishedRemaining = remainingFHFn(
+    new Date(Date.now() - 120_000).toISOString(),
+    new Date(Date.now() - 60_000).toISOString()
+  );
+  check("RemainingFactoryHours finished job", finishedRemaining === 0, `result=${finishedRemaining}`);
+
+  // PRIORITY ENGINE: priorityBeats
+  const { priorityBeats: pBeats, priorityEquals: pEquals, resumeNextIfPaused } = await import("../lib/priorityEngine");
+  check("PriorityBeats High > Low", pBeats("High", "Low") === true, `result=${pBeats("High", "Low")}`);
+  check("PriorityBeats Low < High", pBeats("Low", "High") === false, `result=${pBeats("Low", "High")}`);
+  check("PriorityEquals Medium=Medium", pEquals("Medium", "Medium") === true, `result=${pEquals("Medium", "Medium")}`);
+  check("PriorityEquals High!=Low", pEquals("High", "Low") === false, `result=${pEquals("High", "Low")}`);
+
+  // PRIORITY ENGINE: resumeNextIfPaused empty queue
+  const emptyQueue = resumeNextIfPaused([]);
+  check("ResumeNext empty queue", emptyQueue.length === 0, `length=${emptyQueue.length}`);
+
+  // SCHEDULING: negative quantity rejected
+  try {
+    runScheduler(makeOrder({ quantity: -100 }), DEFAULT_MACHINES);
+    check("Negative quantity rejected", false, "Expected throw");
+  } catch (e) {
+    check("Negative quantity rejected", true, e instanceof Error ? e.message : "threw");
+  }
+
+  // SCHEDULING: single machine (only M1 available, rest breakdown)
+  const singleMachineList = DEFAULT_MACHINES.map((m) => ({
+    ...m,
+    status: (m.id === "M1" ? "available" : "breakdown") as Machine["status"],
+  }));
+  const singleResult = runScheduler(makeOrder({ quantity: 5000, paperType: "Coated" }), singleMachineList);
+  check("Single machine scheduling", singleResult.tasks.length === 1 && singleResult.tasks[0].machineId === "M1", `machines=${singleResult.tasks.map(t => t.machineId).join(",")}`);
+
+  // HIGH PRIORITY: non-High priority order rejected by highPriorityScheduler
+  const nonHigh = scheduleHighPriorityOrder(makeOrder({ priority: "Medium" }), DEFAULT_MACHINES);
+  check("High priority scheduler rejects Medium", nonHigh.success === false, `success=${nonHigh.success}`);
+
+  // SCHEDULING: minimum quantity (100 sheets)
+  const minOrder = runScheduler(makeOrder({ quantity: 100, paperType: "Coated" }), DEFAULT_MACHINES);
+  const minSum = minOrder.tasks.reduce((s, t) => s + t.assignedQty, 0);
+  check("Minimum quantity 100 sheets", minSum === 100 && minOrder.tasks.length > 0, `assigned=${minSum}, tasks=${minOrder.tasks.length}`);
+
+  // PROGRESS: clampProgress negative completed
+  const negProgress = clampProgress(-50, 100);
+  check("Progress negative completed", negProgress.completed === 0 && negProgress.percent === 0, JSON.stringify(negProgress));
+
+  // NORMALISE: null machine returns default
+  const nullMachine = normaliseMachine(null as unknown as Machine);
+  check("Normalise null machine", nullMachine.id === "M1" && Array.isArray(nullMachine.queue), `id=${nullMachine.id}`);
+
+  // MATERIALS RESTOCK: PUT clamp negative available stock to 0
+  const { PUT: materialsPut } = await import("../app/api/materials/[id]/route");
+  const { GET: materialsGet } = await import("../app/api/materials/route");
+  
+  const reqNeg = new Request("http://localhost/api/materials/1", {
+    method: "PUT",
+    body: JSON.stringify({ name: "Coated Sheet", total_stock: 50000, available_stock: -5000 })
+  });
+  const resNeg = await materialsPut(reqNeg, { params: Promise.resolve({ id: "1" }) });
+  const getRes = await materialsGet();
+  const getData = await getRes.json();
+  const material1 = getData.find((m: any) => m.id === 1);
+  check("Materials PUT clamp negative", material1.available_stock === 0, `available_stock=${material1.available_stock}`);
+
+  // MATERIALS RESTOCK: PUT clamp overflow stock to total_stock
+  const reqOver = new Request("http://localhost/api/materials/1", {
+    method: "PUT",
+    body: JSON.stringify({ name: "Coated Sheet", total_stock: 50000, available_stock: 999999 })
+  });
+  await materialsPut(reqOver, { params: Promise.resolve({ id: "1" }) });
+  const getRes2 = await materialsGet();
+  const getData2 = await getRes2.json();
+  const material1Over = getData2.find((m: any) => m.id === 1);
+  check("Materials PUT clamp overflow", material1Over.available_stock === 50000, `available_stock=${material1Over.available_stock}`);
+
   const failed = results.filter((r) => !r.pass);
   console.log(`\n=== Summary: ${results.length - failed.length}/${results.length} passed ===`);
   if (failed.length > 0) {

@@ -31,13 +31,37 @@ function toMachine(row: MachineRow): Machine {
 
 export async function GET() {
   try {
-    const { data, error } = await supabase.from("machines").select("*");
+    const { data, error } = await supabase
+      .from("machines")
+      .select("*")
+      .order("id", { ascending: true });
+
     if (error || !data || data.length === 0) {
-      return NextResponse.json({ machines: DEFAULT_MACHINES });
+      const sortedDefaults = [...DEFAULT_MACHINES].sort((a, b) => a.id.localeCompare(b.id));
+      return NextResponse.json({ machines: sortedDefaults });
     }
-    return NextResponse.json({ machines: (data as MachineRow[]).map(toMachine) });
+
+    const loaded = (data as MachineRow[]).map(toMachine);
+    const sanitized = loaded.map((m) => {
+      // If a machine has an empty queue and is not M2 (which gets seeded), it should be available/standby
+      if (m.id !== "M2" && m.queue.length === 0 && m.status === "busy") {
+        return {
+          ...m,
+          status: m.id === "M5" ? ("backup" as const) : ("available" as const),
+          utilisation: 0,
+          assignedOrderId: undefined,
+        };
+      }
+      return m;
+    });
+
+    // Ensure strict ID sorting
+    sanitized.sort((a, b) => a.id.localeCompare(b.id));
+
+    return NextResponse.json({ machines: sanitized });
   } catch {
-    return NextResponse.json({ machines: DEFAULT_MACHINES });
+    const sortedDefaults = [...DEFAULT_MACHINES].sort((a, b) => a.id.localeCompare(b.id));
+    return NextResponse.json({ machines: sortedDefaults });
   }
 }
 

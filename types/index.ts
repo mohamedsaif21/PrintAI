@@ -106,3 +106,14 @@ export interface FailureSimulation {
   slaStatus: "SAFE" | "RISK";
   notification: string;
 }
+
+export interface Material {
+  id: number;
+  name: string;
+  unit: string;
+  total_stock: number;
+  available_stock: number;
+  threshold_level: number;
+  created_at?: string;
+  updated_at?: string;
+}

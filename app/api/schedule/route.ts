@@ -1,18 +1,20 @@
-import { NextRequest, NextResponse } from "next/server";
-import { dispatchScheduleToMachines, runScheduler, DEFAULT_MACHINES, normaliseMachine } from "@/lib/scheduler";
-import { scheduleHighPriorityOrder } from "@/lib/highPriorityScheduler";
-import { generateScheduleExplanation, analyseRisk } from "@/lib/gemini";
-import { isSupabaseConfigured, supabase } from "@/lib/supabase";
-import { validateData, CreateOrderSchema } from "@/lib/validation";
-import { Machine, Order } from "@/types";
-import { v4 as uuidv4 } from "uuid";
-import { addHours, isBefore } from "date-fns";
-import { computeSlaStatus } from "@/lib/safeMath";
+import { NextRequest, NextResponse } from 'next/server';
+import { dispatchScheduleToMachines, runScheduler, DEFAULT_MACHINES, normaliseMachine } from '@/lib/scheduler';
+import { scheduleHighPriorityOrder } from '@/lib/highPriorityScheduler';
+import { generateScheduleExplanation, analyseRisk } from '@/lib/gemini';
+import { isSupabaseConfigured, supabase } from '@/lib/supabase';
+import { validateData, CreateOrderSchema } from '@/lib/validation';
+import { Machine, Order } from '@/types';
+import { v4 as uuidv4 } from 'uuid';
+import { addHours, isBefore } from 'date-fns';
+import { computeSlaStatus } from '@/lib/safeMath';
+import { BomService } from '@/lib/bomService';
+import { InventoryService } from '@/lib/inventoryService';
 
 type MachineRow = Machine & {
   paper_types?: string[];
   assigned_order_id?: string;
-  queue?: Machine["queue"];
+  queue?: Machine['queue'];
 };
 
 function toMachine(row: MachineRow): Machine {
@@ -42,6 +44,26 @@ export async function POST(req: NextRequest) {
     }
     const { customer, product, quantity, paperType, priority, deadlineHours } = validation.data;
 
+    // --- INVENTORY CHECK ---
+    const productId = `${product.toLowerCase().replace(' ', '_')}_${paperType.toLowerCase()}`;
+    const bom = await BomService.getBomForProduct(productId);
+
+    if (bom.length === 0) {
+        // If no BOM, we can assume no material is required, or the product is not configured for inventory tracking.
+        // Depending on business rules, you might want to throw an error here.
+        // For now, we allow scheduling.
+    } else {
+        for (const item of bom) {
+            const requiredQuantity = item.quantity_per_unit * Number(quantity);
+            const isAvailable = await InventoryService.checkAvailability(item.material_id, requiredQuantity);
+            if (!isAvailable) {
+                return NextResponse.json({ error: `Insufficient stock for material ID: ${item.material_id}. Required: ${requiredQuantity}` }, { status: 400 });
+            }
+        }
+    }
+    // --- END INVENTORY CHECK ---
+
+
     // Calculate deadline as X hours from current time
     const now = new Date();
     const deadline = addHours(now, Number(deadlineHours));
@@ -49,7 +71,7 @@ export async function POST(req: NextRequest) {
     // Validate deadline is in the future (should always be true with positive deadlineHours)
     if (isBefore(deadline, now)) {
       return NextResponse.json({ 
-        error: `Invalid deadline calculation. Deadline must be in the future.` 
+        error: "Invalid deadline calculation. Deadline must be in the future." 
       }, { status: 400 });
     }
 
@@ -61,23 +83,23 @@ export async function POST(req: NextRequest) {
       paperType,
       priority,
       deadline: deadline.toISOString(),
-      status: "Pending Approval",
+      status: 'Pending Approval',
       createdAt: new Date().toISOString(),
     };
 
     // Fetch machines from Supabase (or fall back to defaults)
     let machines = currentMachines || DEFAULT_MACHINES;
     try {
-      const { data } = await supabase.from("machines").select("*");
+      const { data } = await supabase.from('machines').select('*');
       if (!currentMachines && data && data.length > 0) machines = (data as MachineRow[]).map(toMachine);
     } catch {
       // use defaults if Supabase not configured
     }
 
-    // ═══════════════════════════════════════════════════════════════════════
+    // -----------------------------------------------------------------------
     // HIGH PRIORITY SCHEDULER: 3-Pass What-If Analysis
-    // ═══════════════════════════════════════════════════════════════════════
-    if (priority === "High") {
+    // -----------------------------------------------------------------------
+    if (priority === 'High') {
       const whatIfResult = scheduleHighPriorityOrder(order, machines);
       
       if (!whatIfResult.success) {
@@ -98,7 +120,7 @@ export async function POST(req: NextRequest) {
 
       // Add pass info to explanation
       const passInfo = `\n\n[Pass ${whatIfResult.passUsed} used: ${whatIfResult.warnings[whatIfResult.warnings.length - 1]}]`;
-      result.explanation = (result.explanation || "") + passInfo;
+      result.explanation = (result.explanation || '') + passInfo;
 
       // Run risk analysis
       result.risk = await analyseRisk(order, machines, result);
@@ -106,7 +128,7 @@ export async function POST(req: NextRequest) {
       // Save to Supabase
       if (isSupabaseConfigured()) {
         try {
-          await supabase.from("orders").insert({
+          await supabase.from('orders').insert({
             id: order.id,
             customer: order.customer,
             product: order.product,
@@ -118,7 +140,7 @@ export async function POST(req: NextRequest) {
             created_at: order.createdAt,
           });
 
-          await supabase.from("schedules").insert({
+          await supabase.from('schedules').insert({
             order_id: order.id,
             tasks: result.tasks,
             overall_finish: result.overallFinish,
@@ -127,8 +149,16 @@ export async function POST(req: NextRequest) {
             explanation: result.explanation,
             created_at: new Date().toISOString(),
           });
+
+          // --- RESERVE MATERIALS ---
+          for (const item of bom) {
+              const requiredQuantity = item.quantity_per_unit * Number(quantity);
+              await InventoryService.reserveMaterial(item.material_id, requiredQuantity, order.id);
+          }
+          // --- END RESERVE MATERIALS ---
+
         } catch (dbError) {
-          console.error("Failed to persist order/schedule to database:", dbError);
+          console.error('Failed to persist order/schedule to database:', dbError);
         }
       }
 
@@ -141,9 +171,9 @@ export async function POST(req: NextRequest) {
       });
     }
 
-    // ═══════════════════════════════════════════════════════════════════════
+    // -----------------------------------------------------------------------
     // NORMAL SCHEDULER: For Medium and Low Priority orders
-    // ═══════════════════════════════════════════════════════════════════════
+    // -----------------------------------------------------------------------
     // Run rule-based scheduler against the live machine queue/status state.
     const result = runScheduler(order, machines);
 
@@ -158,7 +188,7 @@ export async function POST(req: NextRequest) {
     // Save order and schedule to Supabase
     if (isSupabaseConfigured()) {
       try {
-        await supabase.from("orders").insert({
+        await supabase.from('orders').insert({
           id: order.id,
           customer: order.customer,
           product: order.product,
@@ -170,23 +200,31 @@ export async function POST(req: NextRequest) {
           created_at: order.createdAt,
         });
 
-        await supabase.from("schedules").insert({
-          order_id: order.id,
-          tasks: result.tasks,
-          overall_finish: result.overallFinish,
-          sla_status: result.slaStatus,
-          sla_diff: result.slaDiff,
-          explanation: result.explanation,
-          created_at: new Date().toISOString(),
+        await supabase.from('schedules').insert({
+            order_id: order.id,
+            tasks: result.tasks,
+            overall_finish: result.overallFinish,
+            sla_status: result.slaStatus,
+            sla_diff: result.slaDiff,
+            explanation: result.explanation,
+            created_at: new Date().toISOString(),
         });
+
+        // --- RESERVE MATERIALS ---
+        for (const item of bom) {
+            const requiredQuantity = item.quantity_per_unit * Number(quantity);
+            await InventoryService.reserveMaterial(item.material_id, requiredQuantity, order.id);
+        }
+        // --- END RESERVE MATERIALS ---
+
       } catch (dbError) {
-        console.error("Failed to persist order/schedule to database:", dbError);
+        console.error('Failed to persist order/schedule to database:', dbError);
       }
     }
 
     return NextResponse.json({ order, schedule: result, machines: updatedMachines, preemptionEvents });
   } catch (error: unknown) {
-    const message = error instanceof Error ? error.message : "Internal Server Error";
+    const message = error instanceof Error ? error.message : 'Internal Server Error';
     return NextResponse.json({ error: message }, { status: 500 });
   }
 }
@@ -196,28 +234,28 @@ export async function PUT(req: NextRequest) {
     const { orderId, tasks, overallFinish, slaStatus, slaDiff } = await req.json();
 
     if (!orderId || !tasks) {
-      return NextResponse.json({ error: "Missing orderId or tasks" }, { status: 400 });
+      return NextResponse.json({ error: 'Missing orderId or tasks' }, { status: 400 });
     }
 
     if (isSupabaseConfigured()) {
       const { error } = await supabase
-        .from("schedules")
+        .from('schedules')
         .update({
           tasks,
           overall_finish: overallFinish,
           sla_status: slaStatus,
           sla_diff: slaDiff,
-          explanation: "Manually reassigned to machine.",
+          explanation: 'Manually reassigned to machine.',
           created_at: new Date().toISOString(),
         })
-        .eq("order_id", orderId);
+        .eq('order_id', orderId);
 
       if (error) throw error;
     }
 
     return NextResponse.json({ success: true });
   } catch (error: any) {
-    console.error("PUT schedule error:", error);
-    return NextResponse.json({ error: error.message || "Internal Server Error" }, { status: 500 });
+    console.error('PUT schedule error:', error);
+    return NextResponse.json({ error: error.message || 'Internal Server Error' }, { status: 500 });
   }
 }

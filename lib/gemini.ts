@@ -73,7 +73,8 @@ export async function analyseRisk(
   // Calculate exact minutes between deadline and finish. 
   // Positive means we finish BEFORE deadline (buffer).
   // Negative means we finish AFTER deadline (late).
-  const diffMinutes = differenceInMinutes(deadline, overallFinish);
+  const rawDiff = differenceInMinutes(deadline, overallFinish);
+  const diffMinutes = Number.isNaN(rawDiff) ? 0 : rawDiff;
   
   // Determine risk level based on actual time difference
   let calcRiskLevel: "LOW" | "MEDIUM" | "HIGH" = "LOW";

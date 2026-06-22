@@ -355,8 +355,17 @@ export function tickMachines(machines: Machine[], orders: Order[] = []): {
 
     const finished = Date.now() >= new Date(current.realFinishAt).getTime();
     if (!finished) {
-      if (m.assignedOrderId !== current.orderId) return { ...m, assignedOrderId: current.orderId };
-      return m;
+      const start = new Date(current.startedAt).getTime();
+      const finish = new Date(current.realFinishAt).getTime();
+      const now = Date.now();
+      const total = finish - start;
+      const progress = total > 0 ? Math.min(100, Math.max(0, Math.round(((now - start) / total) * 100))) : 0;
+
+      return { 
+        ...m, 
+        assignedOrderId: current.orderId, 
+        utilisation: progress 
+      };
     }
 
     // Job finished: pop it, mark completed, start next if present

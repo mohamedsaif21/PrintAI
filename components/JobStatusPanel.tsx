@@ -156,13 +156,13 @@ export function JobStatusPanel({ order, schedule, machines }: JobStatusPanelProp
     : safeMachines.filter((m) => (m.queue ?? []).some((j) => j.orderId === order.id && j.status !== "completed"));
 
   return (
-    <div className="flex flex-col space-y-6 bg-white dark:bg-gray-900 p-6 rounded-xl border border-gray-200 dark:border-gray-800 shadow-sm">
+    <div className="flex flex-col space-y-6 bg-white p-6 rounded-xl border border-gray-200 shadow-sm">
       {/* --- Job Identity Section --- */}
       <div className="flex justify-between items-start">
         <div>
-          <h2 className="text-lg font-bold text-gray-900 dark:text-gray-100">WO: {order.id}</h2>
+          <h2 className="text-lg font-bold text-gray-900">WO: {order.id}</h2>
           <p className="text-sm text-gray-500">{order.customer}</p>
-          <p className="text-sm font-medium text-gray-700 dark:text-gray-300 mt-1">
+          <p className="text-sm font-medium text-gray-700 mt-1">
             {order.product} · {order.paperType}
           </p>
         </div>
@@ -175,47 +175,47 @@ export function JobStatusPanel({ order, schedule, machines }: JobStatusPanelProp
       <div>
         <div className="flex justify-between items-end mb-2">
           <div>
-            <span className="text-3xl font-bold text-gray-900 dark:text-gray-100">{progress.percent}%</span>
+            <span className="text-3xl font-bold text-gray-900">{progress.percent}%</span>
             <span className="text-sm text-gray-500 ml-2">
-              ({progress.completedSheets.toLocaleString()} / {progress.totalSheets.toLocaleString()} jobs)
+              ({progress.completedSheets.toLocaleString()} / {progress.totalSheets.toLocaleString()} sheets)
             </span>
           </div>
-          <div className="text-sm font-bold text-blue-600 dark:text-blue-400 uppercase tracking-wider">
+          <div className="text-sm font-bold text-blue-600 uppercase tracking-wider">
             {activeStage}
           </div>
         </div>
-        <div className="w-full bg-gray-100 dark:bg-gray-800 rounded-full h-3 mb-2 overflow-hidden border border-gray-200 dark:border-gray-700">
-          <div 
-            className={`h-3 rounded-full transition-all duration-500 ${order.status === "Completed" ? "bg-emerald-500" : "bg-blue-600"}`} 
+        <div className="w-full bg-gray-100 rounded-full h-3 mb-2 overflow-hidden border border-gray-200">
+          <div
+            className={`h-3 rounded-full transition-all duration-500 ${order.status === "Completed" ? "bg-emerald-600" : "bg-blue-600"}`}
             style={{ width: `${progress.percent}%` }}
           />
         </div>
         {/* Stage Indicator Line */}
         <div className="flex justify-between text-xs font-semibold px-1 text-gray-400">
-          <span className={activeStage === "Pre-Press" ? "text-blue-600 dark:text-blue-400" : (order.status !== "Pending" ? "text-gray-800 dark:text-gray-200" : "")}>Pre-Press</span>
-          <span className={activeStage === "Press" ? "text-blue-600 dark:text-blue-400" : (order.status === "Completed" ? "text-gray-800 dark:text-gray-200" : "")}>Press</span>
-          <span className={activeStage === "Post-Press" ? "text-blue-600 dark:text-blue-400" : ""}>Post-Press</span>
+          <span className={activeStage === "Pre-Press" ? "text-blue-600" : (order.status !== "Pending" ? "text-gray-800" : "")}>Pre-Press</span>
+          <span className={activeStage === "Press" ? "text-blue-600" : (order.status === "Completed" ? "text-gray-800" : "")}>Press</span>
+          <span className={activeStage === "Post-Press" ? "text-blue-600" : ""}>Post-Press</span>
         </div>
       </div>
 
-      <hr className="border-gray-100 dark:border-gray-800" />
+      <hr className="border-gray-200" />
 
       <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
         {/* --- Machine Assignment Section --- */}
         <div>
-          <h3 className="text-sm font-semibold text-gray-900 dark:text-gray-100 mb-3 flex items-center gap-2">
+          <h3 className="text-sm font-semibold text-gray-900 mb-3 flex items-center gap-2">
             <Cpu className="w-4 h-4 text-gray-500" /> Machine Assignment
           </h3>
           {assignedMachines.length > 0 ? (
             <div className="space-y-3">
               {assignedMachines.map(m => {
                 const otherJobs = (m.queue || []).filter(j => j.orderId !== order.id && (j.status === "queued" || j.status === "paused"));
-                
+
                 return (
-                  <div key={m.id} className="flex flex-col p-3 bg-gray-50 dark:bg-gray-800/50 border border-gray-100 dark:border-gray-800 rounded-lg">
+                  <div key={m.id} className="flex flex-col p-3 bg-gray-50 border border-gray-200 rounded-lg">
                     <div className="flex justify-between items-center">
                       <div>
-                        <p className="text-sm font-bold text-gray-900 dark:text-gray-100">{m.id}</p>
+                        <p className="text-sm font-bold text-gray-900">{m.id}</p>
                         <p className="text-xs text-gray-500">Speed: {m.speed.toLocaleString()} / hr</p>
                       </div>
                       <Badge variant={(m.status ?? "available") === "busy" ? "safe" : m.status === "breakdown" ? "risk" : "gray"}>
@@ -223,26 +223,26 @@ export function JobStatusPanel({ order, schedule, machines }: JobStatusPanelProp
                       </Badge>
                     </div>
                     {otherJobs.length > 0 && (
-                      <div className="mt-3 pt-3 border-t border-gray-200 dark:border-gray-700">
+                      <div className="mt-3 pt-3 border-t border-gray-200">
                         <p className="text-xs font-semibold text-gray-500 mb-2">Machine Queue Details</p>
                         <div className="space-y-2">
                           {otherJobs.map((j, idx) => {
                             const isPaused = j.status === "paused";
-                            const pct = isPaused && j.totalEstimatedHours > 0 
-                              ? Math.round((1 - j.estimatedHours / j.totalEstimatedHours) * 100) 
+                            const pct = isPaused && j.totalEstimatedHours > 0
+                              ? Math.round((1 - j.estimatedHours / j.totalEstimatedHours) * 100)
                               : 0;
                             return (
                               <div key={`${j.jobId}-${idx}`} className="flex justify-between items-start text-xs">
                                 <div className="flex flex-col">
-                                  <span className="text-gray-700 dark:text-gray-300 font-medium">Order {j.orderId}</span>
-                                  <span className="text-gray-500">{j.assignedQty.toLocaleString()} jobs</span>
+                                  <span className="text-gray-700 font-medium">Order {j.orderId}</span>
+                                  <span className="text-gray-500">{j.assignedQty.toLocaleString()} sheets</span>
                                 </div>
                                 <div className="flex flex-col items-end">
-                                  <span className={`font-medium ${isPaused ? 'text-amber-600' : 'text-blue-600'}`}>
+                                  <span className={`font-medium ${isPaused ? 'text-amber-700' : 'text-blue-600'}`}>
                                     {isPaused ? 'Paused' : 'Queued'}
                                   </span>
                                   {isPaused && pct > 0 && (
-                                    <span className="text-[10px] text-amber-600">({pct}% done)</span>
+                                    <span className="text-[10px] text-amber-700">({pct}% done)</span>
                                   )}
                                 </div>
                               </div>
@@ -256,7 +256,7 @@ export function JobStatusPanel({ order, schedule, machines }: JobStatusPanelProp
               })}
             </div>
           ) : (
-            <div className="p-3 bg-gray-50 dark:bg-gray-800/50 border border-gray-100 dark:border-gray-800 rounded-lg text-sm text-gray-500 flex items-center justify-center italic">
+            <div className="p-3 bg-gray-50 border border-gray-200 rounded-lg text-sm text-gray-500 flex items-center justify-center italic">
               Unassigned / Standby
             </div>
           )}
@@ -264,17 +264,17 @@ export function JobStatusPanel({ order, schedule, machines }: JobStatusPanelProp
 
         {/* --- Time & SLA Risk Section --- */}
         <div>
-          <h3 className="text-sm font-semibold text-gray-900 dark:text-gray-100 mb-3 flex items-center gap-2">
+          <h3 className="text-sm font-semibold text-gray-900 mb-3 flex items-center gap-2">
             <CalendarDays className="w-4 h-4 text-gray-500" /> Time & SLA Risk
           </h3>
-          <div className="bg-gray-50 dark:bg-gray-800/50 p-4 border border-gray-100 dark:border-gray-800 rounded-lg space-y-3">
+          <div className="bg-gray-50 p-4 border border-gray-200 rounded-lg space-y-3">
             <div className="flex justify-between text-sm">
               <span className="text-gray-500">Start Date:</span>
-              <span className="font-medium text-gray-900 dark:text-gray-100">{formatSafeDate(order.createdAt, "MMM d, h:mm a")}</span>
+              <span className="font-medium text-gray-900">{formatSafeDate(order.createdAt, "MMM d, h:mm a")}</span>
             </div>
             <div className="flex justify-between text-sm">
               <span className="text-gray-500">Estimated Finish:</span>
-              <span className="font-medium text-gray-900 dark:text-gray-100">
+              <span className="font-medium text-gray-900">
                 {schedule?.overallFinish
                   ? formatSafeDate(schedule.overallFinish, "MMM d, h:mm a")
                   : (() => {
@@ -290,24 +290,24 @@ export function JobStatusPanel({ order, schedule, machines }: JobStatusPanelProp
             </div>
             <div className="flex justify-between text-sm">
               <span className="text-gray-500">SLA Deadline:</span>
-              <span className="font-medium text-gray-900 dark:text-gray-100">{formatSafeDate(order.deadline, "MMM d, h:mm a")}</span>
+              <span className="font-medium text-gray-900">{formatSafeDate(order.deadline, "MMM d, h:mm a")}</span>
             </div>
-            
-            <div className="border-t border-gray-200 dark:border-gray-700 my-2" />
-            
+
+            <div className="border-t border-gray-200 my-2" />
+
             <div className="flex justify-between text-sm">
               <span className="text-gray-500">Ageing:</span>
-              <span className="font-medium text-gray-900 dark:text-gray-100">{ageDays} days</span>
+              <span className="font-medium text-gray-900">{ageDays} days</span>
             </div>
             <div className="flex justify-between text-sm items-center">
               <span className="text-gray-500">Time Remaining:</span>
-              <span className={`font-bold ${formatTimeRemaining().includes("Overdue") ? "text-red-600 dark:text-red-400" : "text-gray-900 dark:text-gray-100"}`}>
+              <span className={`font-bold ${formatTimeRemaining().includes("Overdue") ? "text-red-600" : "text-gray-900"}`}>
                 {formatTimeRemaining()}
               </span>
             </div>
-            
-            <div className="pt-2 mt-2 border-t border-gray-200 dark:border-gray-700 flex justify-between items-center">
-              <span className="text-sm font-medium text-gray-700 dark:text-gray-300">Risk Assessment:</span>
+
+            <div className="pt-2 mt-2 border-t border-gray-200 flex justify-between items-center">
+              <span className="text-sm font-medium text-gray-700">Risk Assessment:</span>
               <Badge variant={risk.level === "HIGH" ? "risk" : risk.level === "MEDIUM" ? "warn" : "safe"}>
                 {risk.label}
               </Badge>

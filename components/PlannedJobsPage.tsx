@@ -150,13 +150,13 @@ export function PlannedJobsPage({ addNotification }: Props) {
           <p className="text-sm text-gray-500 dark:text-gray-400 mt-1">Production Plan</p>
         </div>
         <div className="flex items-center gap-3">
-          <button className="px-3 py-1.5 text-sm bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-md shadow-sm text-gray-700 dark:text-gray-200 flex items-center gap-2">
+          <button className="px-3 py-1.5 text-sm bg-white border border-gray-200 rounded-md shadow-sm text-gray-700 flex items-center gap-2 hover:bg-gray-50 transition-colors">
             Today <ChevronDown className="w-4 h-4" />
           </button>
           <select 
             value={shiftFilter}
             onChange={(e) => setShiftFilter(e.target.value)}
-            className="px-3 py-1.5 text-sm bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-md shadow-sm text-gray-700 dark:text-gray-200 outline-none"
+            className="px-3 py-1.5 text-sm bg-white border border-gray-200 rounded-md shadow-sm text-gray-700 outline-none hover:border-gray-300 transition-colors"
           >
             <option>All Shifts</option>
             <option>Morning</option>
@@ -166,28 +166,28 @@ export function PlannedJobsPage({ addNotification }: Props) {
           <select 
             value={operatorFilter}
             onChange={(e) => setOperatorFilter(e.target.value)}
-            className="px-3 py-1.5 text-sm bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-md shadow-sm text-gray-700 dark:text-gray-200 outline-none"
+            className="px-3 py-1.5 text-sm bg-white border border-gray-200 rounded-md shadow-sm text-gray-700 outline-none hover:border-gray-300 transition-colors"
           >
             <option>All Operators</option>
             <option>Sarah Jenkins</option>
             <option>David Chen</option>
             <option>Elena Rust</option>
           </select>
-          <div className="flex items-center border border-gray-200 dark:border-gray-700 rounded-md shadow-sm bg-white dark:bg-gray-800 p-0.5 ml-2">
-            <button className="p-1 bg-gray-100 dark:bg-gray-700 rounded shadow-sm"><LayoutList className="w-4 h-4 text-gray-700 dark:text-gray-200" /></button>
-            <button className="p-1"><LayoutGrid className="w-4 h-4 text-gray-400 dark:text-gray-500" /></button>
+          <div className="flex items-center border border-gray-200 rounded-md shadow-sm bg-white p-0.5 ml-2">
+            <button className="p-1 bg-gray-100 rounded shadow-sm" style={{ color: '#374151', backgroundColor: '#f3f4f6' }}><LayoutList className="w-4 h-4 text-gray-700" /></button>
+            <button className="p-1" style={{ color: '#9ca3af', backgroundColor: 'transparent' }}><LayoutGrid className="w-4 h-4 text-gray-400" /></button>
           </div>
         </div>
       </div>
 
       {/* AI Banner */}
       {stats.atRisk > 0 && (
-        <div className="bg-gray-50 dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg p-3 flex items-center justify-between">
-          <div className="flex items-center gap-2 text-sm text-gray-700 dark:text-gray-300">
+        <div className="bg-gray-50 border border-gray-200 rounded-lg p-3 flex items-center justify-between">
+          <div className="flex items-center gap-2 text-sm text-gray-700">
             <Sparkles className="w-4 h-4 text-amber-500" />
             <span><strong className="font-semibold">{stats.atRisk}</strong> assigned jobs are at risk of delay.</span>
           </div>
-          <button onClick={handleOptimise} disabled={optimising} className="text-sm font-medium text-blue-600 dark:text-blue-400 hover:underline">
+          <button onClick={handleOptimise} disabled={optimising} className="text-sm font-medium text-blue-600 hover:underline" style={{ background: 'transparent', color: '#2563eb' }}>
             View AI suggestions
           </button>
         </div>
@@ -205,12 +205,13 @@ export function PlannedJobsPage({ addNotification }: Props) {
             onClick={() => setStageFilter(stageFilter === stage.id ? null : stage.id)}
             className={`p-4 rounded-xl border text-left transition-all ${
               stageFilter === stage.id 
-                ? "border-blue-500 ring-1 ring-blue-500 bg-blue-50 dark:bg-blue-900/20" 
-                : "border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-900 hover:border-gray-300 dark:hover:border-gray-600"
+                ? "border-blue-500 ring-1 ring-blue-500 bg-blue-50" 
+                : "border-gray-200 bg-white hover:border-gray-300 hover:shadow-sm"
             }`}
+            style={{ color: 'inherit' }}
           >
-            <p className="text-sm font-medium text-gray-500 dark:text-gray-400">{stage.label}</p>
-            <p className="text-2xl font-bold text-gray-900 dark:text-gray-100 mt-1">{stage.count} <span className="text-base font-normal text-gray-400">Jobs</span></p>
+            <p className="text-sm font-medium text-gray-500">{stage.label}</p>
+            <p className="text-2xl font-bold text-gray-900 mt-1">{stage.count} <span className="text-base font-normal text-gray-400">Jobs</span></p>
           </button>
         ))}
       </div>
@@ -224,20 +225,21 @@ export function PlannedJobsPage({ addNotification }: Props) {
             placeholder="Search" 
             value={searchQuery}
             onChange={(e) => setSearchQuery(e.target.value)}
-            className="pl-9 pr-4 py-2 text-sm bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-800 rounded-lg outline-none focus:ring-2 focus:ring-blue-500 w-64 text-gray-900 dark:text-gray-100"
+            className="pl-9 pr-4 py-2 text-sm bg-white border border-gray-200 rounded-lg outline-none focus:ring-2 focus:ring-blue-500 w-64 text-gray-900 placeholder-gray-400"
           />
         </div>
         <div className="flex items-center gap-3">
-          <button className="p-2 border border-gray-200 dark:border-gray-700 rounded-lg bg-white dark:bg-gray-800 text-gray-600 dark:text-gray-400 hover:bg-gray-50 dark:hover:bg-gray-700">
+          <button className="p-2 border border-gray-200 rounded-lg bg-white text-gray-600 hover:bg-gray-50 transition-colors" style={{ color: '#4b5563' }}>
             <Filter className="w-4 h-4" />
           </button>
-          <button className="px-4 py-2 text-sm font-medium text-gray-700 dark:text-gray-200 bg-gray-100 dark:bg-gray-800 hover:bg-gray-200 dark:hover:bg-gray-700 rounded-lg transition-colors">
+          <button className="px-4 py-2 text-sm font-medium text-gray-700 bg-gray-100 hover:bg-gray-200 rounded-lg transition-colors" style={{ color: '#374151', backgroundColor: '#f3f4f6' }}>
             Assign to
           </button>
           <button 
             onClick={handleOptimise}
             disabled={optimising}
-            className="px-4 py-2 text-sm font-medium text-white bg-gray-900 dark:bg-gray-100 dark:text-gray-900 hover:bg-gray-800 dark:hover:bg-white rounded-lg transition-colors flex items-center gap-2 disabled:opacity-70"
+            className="px-4 py-2 text-sm font-medium text-white bg-gray-900 hover:bg-gray-700 rounded-lg transition-colors flex items-center gap-2 disabled:opacity-70"
+            style={{ backgroundColor: '#111827', color: 'white' }}
           >
             {optimising ? <Loader2 className="w-4 h-4 animate-spin" /> : <Sparkles className="w-4 h-4" />}
             AI Optimise
@@ -246,11 +248,11 @@ export function PlannedJobsPage({ addNotification }: Props) {
       </div>
 
       {/* Table Area */}
-      <div className="bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-800 rounded-xl overflow-hidden flex-1 flex flex-col min-h-[400px]">
+      <div className="bg-white border border-gray-200 rounded-xl overflow-hidden flex-1 flex flex-col min-h-[400px]">
         <div className="overflow-x-auto flex-1">
           <table className="w-full text-left border-collapse whitespace-nowrap">
             <thead>
-              <tr className="border-b border-gray-200 dark:border-gray-800 bg-gray-50 dark:bg-gray-900/50 text-xs font-medium text-gray-500 dark:text-gray-400">
+              <tr className="border-b border-gray-200 bg-gray-50 text-xs font-medium text-gray-500">
                 <th className="py-3 pl-4 pr-2 font-normal"><input type="checkbox" onChange={selectAll} checked={filteredJobs.length > 0 && selectedIds.size === filteredJobs.length} className="rounded border-gray-300" /></th>
                 <th className="py-3 px-2 font-normal"></th>
                 <th className="py-3 px-4 font-normal flex items-center gap-1">Facility <Filter className="w-3 h-3" /></th>
@@ -267,15 +269,15 @@ export function PlannedJobsPage({ addNotification }: Props) {
                 <th className="py-3 px-4 font-normal">CS Name</th>
               </tr>
             </thead>
-            <tbody className="text-sm divide-y divide-gray-100 dark:divide-gray-800/60 text-gray-900 dark:text-gray-200">
+            <tbody className="text-sm divide-y divide-gray-100 text-gray-900">
               {loading ? (
                 <tr><td colSpan={14} className="py-12 text-center text-gray-500"><Loader2 className="w-6 h-6 animate-spin mx-auto" /></td></tr>
               ) : paginatedJobs.length === 0 ? (
                 <tr>
                   <td colSpan={14} className="py-12 text-center">
                     <div className="flex flex-col items-center gap-2">
-                      <p className="text-sm text-gray-500 dark:text-gray-400">No scheduled jobs yet</p>
-                      <p className="text-xs text-gray-400 dark:text-gray-500">
+                      <p className="text-sm text-gray-500">No scheduled jobs yet</p>
+                      <p className="text-xs text-gray-400">
                         Create an order from the Orders page to see planned jobs here.
                       </p>
                     </div>
@@ -283,31 +285,31 @@ export function PlannedJobsPage({ addNotification }: Props) {
                 </tr>
               ) : (
                 paginatedJobs.map((job) => (
-                  <tr key={job.id} className="hover:bg-gray-50 dark:hover:bg-gray-800/40 transition-colors group">
+                  <tr key={job.id} className="hover:bg-gray-50 transition-colors group">
                     <td className="py-3 pl-4 pr-2"><input type="checkbox" checked={selectedIds.has(job.id)} onChange={() => toggleSelection(job.id)} className="rounded border-gray-300" /></td>
                     <td className="py-3 px-2 text-gray-400"><div className="flex items-center gap-1"><GripVertical className="w-4 h-4 cursor-grab" /><MoreVertical className="w-4 h-4 cursor-pointer" /></div></td>
                     <td className="py-3 px-4">{job.facility}</td>
                     <td className="py-3 px-4"><Badge variant={statusToVariant(job.printing_status)}>{job.printing_status}</Badge></td>
-                    <td className="py-3 px-4 font-medium text-blue-600 dark:text-blue-400 cursor-pointer hover:underline flex items-center gap-1.5">
+                    <td className="py-3 px-4 font-medium text-blue-600 cursor-pointer hover:underline flex items-center gap-1.5">
                       {job.id}
                       {job.ai_suggestion && <span title={job.ai_suggestion} className="cursor-help"><Sparkles className="w-3.5 h-3.5 text-amber-500" /></span>}
                     </td>
                     <td className="py-3 px-4"><Badge variant={woStatusToVariant(job.wo_status)}>{job.wo_status}</Badge></td>
                     <td className="py-3 px-4">{job.sla}h</td>
                     <td className="py-3 px-4">{job.ageing}d</td>
-                    <td className="py-3 px-4 text-gray-600 dark:text-gray-400">{job.machine_name}</td>
-                    <td className="py-3 px-4 text-gray-600 dark:text-gray-400">{new Date(job.schedule_date).toLocaleDateString("en-GB", { day: '2-digit', month: 'short' })}</td>
-                    <td className="py-3 px-4 text-gray-600 dark:text-gray-400">{job.retailer}</td>
-                    <td className="py-3 px-4 text-gray-600 dark:text-gray-400">{job.product_id}</td>
+                    <td className="py-3 px-4 text-gray-600">{job.machine_name}</td>
+                    <td className="py-3 px-4 text-gray-600">{new Date(job.schedule_date).toLocaleDateString("en-GB", { day: '2-digit', month: 'short' })}</td>
+                    <td className="py-3 px-4 text-gray-600">{job.retailer}</td>
+                    <td className="py-3 px-4 text-gray-600">{job.product_id}</td>
                     <td className="py-3 px-4">{job.balance_qty.toLocaleString()}</td>
-                    <td className="py-3 px-4 text-gray-600 dark:text-gray-400">{job.cs_name}</td>
+                    <td className="py-3 px-4 text-gray-600">{job.cs_name}</td>
                   </tr>
                 ))
               )}
             </tbody>
           </table>
         </div>
-        <div className="p-3 border-t border-gray-200 dark:border-gray-800 bg-gray-50 dark:bg-gray-900 flex items-center justify-between text-xs text-gray-500 dark:text-gray-400 font-medium">
+        <div className="p-3 border-t border-gray-200 bg-gray-50 flex items-center justify-between text-xs text-gray-500 font-medium">
           <span>
             Showing {filteredJobs.length === 0 ? 0 : startIndex + 1} to {Math.min(startIndex + itemsPerPage, filteredJobs.length)} of {filteredJobs.length} entries 
             {filteredJobs.length !== stats.total && ` (filtered from ${stats.total})`}
@@ -316,14 +318,16 @@ export function PlannedJobsPage({ addNotification }: Props) {
             <button 
               onClick={() => setCurrentPage(p => Math.max(1, p - 1))}
               disabled={currentPage === 1 || filteredJobs.length === 0}
-              className="px-2 py-1 rounded bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 hover:bg-gray-100 disabled:opacity-50 transition-colors"
+              className="px-2 py-1 rounded bg-white border border-gray-200 text-gray-600 hover:bg-gray-100 disabled:opacity-50 transition-colors"
+              style={{ color: '#4b5563' }}
             >
               Prev
             </button>
             <button 
               onClick={() => setCurrentPage(p => Math.min(totalPages, p + 1))}
               disabled={currentPage >= totalPages || filteredJobs.length === 0}
-              className="px-2 py-1 rounded bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 hover:bg-gray-100 disabled:opacity-50 transition-colors"
+              className="px-2 py-1 rounded bg-white border border-gray-200 text-gray-600 hover:bg-gray-100 disabled:opacity-50 transition-colors"
+              style={{ color: '#4b5563' }}
             >
               Next
             </button>

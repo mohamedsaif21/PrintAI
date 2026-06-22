@@ -226,51 +226,25 @@ const STATUS_CONFIG: Record<string, { dot: string; badge: "safe" | "warn" | "gra
 const DETAIL_TABS = ["Machine Details", "Job History", "Downtime & Maintenance Logs", "AI Suggestions"] as const;
 type DetailTab = (typeof DETAIL_TABS)[number];
 
-function formatDate(value: string) {
-  return new Date(value).toLocaleDateString();
-}
-
 function LiveJobProgress({ machine }: { machine: Machine }) {
-  const [nowMs, setNowMs] = useState(0);
-
-  useEffect(() => {
-    const tick = () => setNowMs(Date.now());
-    tick();
-    const id = setInterval(tick, 1000);
-    return () => clearInterval(id);
-  }, []);
-
-  const job = machine.queue?.[0];
-  if (!job || job.status !== "running") {
-    return (
-      <div className="space-y-1">
-        <div className="h-1.5 bg-gray-100 dark:bg-gray-800 rounded-full overflow-hidden">
-          <div
-            className={`h-full rounded-full transition-all ${machine.status === "available" ? "bg-emerald-500" : machine.status === "busy" ? "bg-amber-500" : machine.status === "breakdown" ? "bg-red-500" : "bg-gray-400"}`}
-            style={{ width: `${Math.min(machine.utilisation, 100)}%` }}
-          />
-        </div>
-        <p className="text-xs text-gray-400">{machine.utilisation}% utilised</p>
-      </div>
-    );
-  }
-
-  const startMs = new Date(job.startedAt).getTime();
-  const finishMs = new Date(job.realFinishAt).getTime();
-  const clockMs = nowMs || startMs;
-  const progress = clockMs >= finishMs ? 100 : clockMs <= startMs ? 0 : Math.round(((clockMs - startMs) / (finishMs - startMs)) * 100);
-  const remainingSeconds = Math.ceil(Math.max(0, finishMs - clockMs) / 1000);
-  const minutes = Math.floor(remainingSeconds / 60);
-  const seconds = remainingSeconds % 60;
-
+  const progress = machine.utilisation;
   return (
     <div className="space-y-1">
-      <div className="h-1.5 bg-gray-100 dark:bg-gray-800 rounded-full overflow-hidden">
-        <div className="h-full rounded-full bg-blue-500 transition-all" style={{ width: `${progress}%` }} />
+      <div className="h-1.5 bg-gray-200 rounded-full overflow-hidden">
+        <div
+          className={`h-full rounded-full transition-all ${
+            machine.status === "available"
+              ? "bg-emerald-500"
+              : machine.status === "busy"
+              ? "bg-amber-500"
+              : machine.status === "breakdown"
+              ? "bg-red-500"
+              : "bg-gray-400"
+          }`}
+          style={{ width: `${Math.min(progress, 100)}%` }}
+        />
       </div>
-      <p className="text-xs text-gray-400 tabular-nums">
-        {progress}% - {minutes}:{seconds.toString().padStart(2, "0")} left
-      </p>
+      <p className="text-xs text-gray-500">{progress}% utilised</p>
     </div>
   );
 }
@@ -290,17 +264,14 @@ function MachineDetail({
 }) {
   const [tab, setTab] = useState<DetailTab>("Machine Details");
   const [currentTime, setCurrentTime] = useState(new Date());
-  
+
   useEffect(() => {
     const interval = setInterval(() => setCurrentTime(new Date()), 30000); // Update every 30s
     return () => clearInterval(interval);
   }, []);
-  
+
   const extra = MACHINE_EXTRA[machine.id] || MACHINE_EXTRA.M4;
   const statusStyle = STATUS_STYLES[machine.status] || STATUS_STYLES.available;
-  const activeTask = lastSchedule?.tasks.find((task) => task.machineId === machine.id);
-  const isWorking = machine.status === "busy" && Boolean(activeTask);
-  const jobProgress = isWorking ? machine.utilisation : machine.status === "available" ? 0 : Math.min(100, machine.utilisation);
   const activeJob = resolveActiveJobForMachine(machine, orders, lastSchedule, machines);
 
   const shiftEndTime = currentTime;
@@ -318,38 +289,38 @@ function MachineDetail({
         status: job.status === "completed" ? "Completed" : "In Progress",
       })),
     ...extra.jobHistory.filter(
-      (staticJob) => 
+      (staticJob) =>
         !machine.queue.some(
-          (qJob) => 
-            staticJob.job.includes(qJob.orderId) && 
+          (qJob) =>
+            staticJob.job.includes(qJob.orderId) &&
             staticJob.status === (qJob.status === "completed" ? "Completed" : "In Progress")
         )
     ),
   ];
-  
+
   // Merge machine's persistent downtime logs with static fallback data
   const dynamicDowntimeLogs = [
     ...(machine.downtimeLogs || []),
     ...extra.downtimeLogs.filter(
-      (staticLog) => 
+      (staticLog) =>
         !(machine.downtimeLogs || []).some(
-          (persistedLog) => 
-            persistedLog.date === staticLog.date && 
+          (persistedLog) =>
+            persistedLog.date === staticLog.date &&
             persistedLog.start === staticLog.start
         )
     ),
   ];
-  
+
   // Build dynamic runtime segments based on actual machine state history
   const buildRuntimeSegments = () => {
     const shiftStart = machine.shiftStartTime ? new Date(machine.shiftStartTime) : shiftStartTime;
     const shiftEnd = currentTime;
     const shiftDurationMs = shiftEnd.getTime() - shiftStart.getTime();
-    
+
     // If no state history or too short, show current state
     if (!machine.stateHistory || machine.stateHistory.length === 0 || shiftDurationMs < 60000) {
       const runningJob = machine.queue.find((job) => job.status === "running");
-      
+
       if (machine.status === "breakdown") {
         return [{ color: "#ef4444", pct: 100, label: "Stopped Unexpectedly" }];
       }
@@ -366,7 +337,7 @@ function MachineDetail({
         const totalDuration = finishMs - startMs;
         const elapsed = Math.max(0, nowMs - startMs);
         const progress = Math.min(100, (elapsed / totalDuration) * 100);
-        
+
         return [
           { color: "#22c55e", pct: Math.round(progress), label: "Operating Normally" },
           { color: "#d1d5db", pct: Math.round(100 - progress), label: "Remaining Time" },
@@ -374,31 +345,31 @@ function MachineDetail({
       }
       return [{ color: "#3b82f6", pct: 100, label: "Idle" }];
     }
-    
+
     // Build segments from state history
     const segments: { color: string; pct: number; label: string; startMs: number; endMs: number }[] = [];
-    const history = [...machine.stateHistory].sort((a, b) => 
+    const history = [...machine.stateHistory].sort((a, b) =>
       new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime()
     );
-    
+
     // Start with initial state at shift start
     let lastTimestamp = shiftStart.getTime();
-    
+
     history.forEach((log, index) => {
       const logTime = new Date(log.timestamp).getTime();
-      
+
       // Don't process logs before shift start
       if (logTime < shiftStart.getTime()) return;
-      
+
       const durationMs = logTime - lastTimestamp;
       if (durationMs > 0) {
         // Add segment for the previous state
         const prevLog = index > 0 ? history[index - 1] : null;
         const prevStatus = prevLog?.status || "available";
-        
+
         let color = "#3b82f6"; // Idle
         let label = "Idle";
-        
+
         if (prevStatus === "busy") {
           color = "#22c55e";
           label = prevLog?.orderId ? `Running ${prevLog.orderId}` : "Operating Normally";
@@ -409,7 +380,7 @@ function MachineDetail({
           color = "#d1d5db";
           label = "Standby";
         }
-        
+
         segments.push({
           color,
           pct: 0,
@@ -418,19 +389,16 @@ function MachineDetail({
           endMs: logTime,
         });
       }
-      
+
       lastTimestamp = logTime;
     });
-    
+
     // Add current state from last log to now
     const currentMs = shiftEnd.getTime();
     if (currentMs > lastTimestamp) {
       const lastLog = history[history.length - 1];
       const currentStatus = lastLog?.status || machine.status;
-      
-      let color = "#3b82f6";
-      let label = "Idle";
-      
+
       if (currentStatus === "busy") {
         const runningJob = machine.queue.find((job) => job.status === "running");
         if (runningJob) {
@@ -439,12 +407,12 @@ function MachineDetail({
           const jobDuration = jobFinishMs - jobStartMs;
           const elapsed = Math.max(0, currentMs - jobStartMs);
           const progress = Math.min(1, elapsed / jobDuration);
-          
+
           // Split busy period into completed and remaining
           const busyDuration = currentMs - lastTimestamp;
           const completedDuration = busyDuration * progress;
           const remainingDuration = busyDuration * (1 - progress);
-          
+
           if (completedDuration > 0) {
             segments.push({
               color: "#22c55e",
@@ -454,7 +422,7 @@ function MachineDetail({
               endMs: lastTimestamp + completedDuration,
             });
           }
-          
+
           if (remainingDuration > 0) {
             segments.push({
               color: "#d1d5db",
@@ -465,9 +433,8 @@ function MachineDetail({
             });
           }
         } else {
-          color = "#22c55e";
-          label = lastLog?.orderId ? `Running ${lastLog.orderId}` : "Operating Normally";
-          segments.push({ color, pct: 0, label, startMs: lastTimestamp, endMs: currentMs });
+          const label = lastLog?.orderId ? `Running ${lastLog.orderId}` : "Operating Normally";
+          segments.push({ color: "#22c55e", pct: 0, label, startMs: lastTimestamp, endMs: currentMs });
         }
       } else if (currentStatus === "breakdown") {
         segments.push({
@@ -495,46 +462,46 @@ function MachineDetail({
         });
       }
     }
-    
+
     // Calculate percentages
     segments.forEach((seg) => {
       const duration = seg.endMs - seg.startMs;
       seg.pct = Math.max(1, Math.round((duration / shiftDurationMs) * 100));
     });
-    
+
     // Normalize to 100%
     const totalPct = segments.reduce((sum, seg) => sum + seg.pct, 0);
     if (totalPct !== 100 && segments.length > 0) {
       const diff = 100 - totalPct;
       segments[segments.length - 1].pct += diff;
     }
-    
+
     return segments.filter((s) => s.pct > 0).map(({ color, pct, label }) => ({ color, pct, label }));
   };
-  
+
   const dynamicRuntimeSegments = buildRuntimeSegments();
 
   return (
-    <div className="space-y-4">
+    <div className="space-y-4 bg-gray-100 p-6 rounded-xl">
       <div className="flex items-center gap-2 text-sm text-gray-500">
         <button onClick={onBack} className="flex items-center gap-1 hover:text-blue-600 transition-colors">
           <ArrowLeft className="w-4 h-4" /> Machines
         </button>
         <ChevronRight className="w-3 h-3" />
-        <span className="text-gray-900 dark:text-gray-100 font-medium">{extra.name}</span>
+        <span className="text-gray-900 font-medium">{extra.name}</span>
       </div>
 
-      <h2 className="text-xl font-bold text-gray-900 dark:text-gray-100">{extra.name}</h2>
+      <h2 className="text-xl font-bold text-gray-900">{extra.name}</h2>
 
-      <div className="bg-white dark:bg-gray-900 rounded-xl border border-gray-200 dark:border-gray-800 p-5">
+      <div className="bg-white rounded-xl border border-gray-200 p-5 shadow-sm">
           <div className="flex items-center gap-3 mb-4">
-            <h3 className="text-base font-semibold text-gray-900 dark:text-gray-100">{extra.name}</h3>
+            <h3 className="text-base font-semibold text-gray-900">{extra.name}</h3>
             <span className={`px-2.5 py-1 rounded-md text-xs font-semibold ${statusStyle.bg} ${statusStyle.text}`}>
               {statusStyle.label}
             </span>
           </div>
           <div className="flex gap-6">
-            <div className="w-28 h-28 rounded-lg bg-gray-100 dark:bg-gray-800 flex items-center justify-center flex-shrink-0">
+            <div className="w-28 h-28 rounded-lg bg-gray-100 border border-gray-200 flex items-center justify-center flex-shrink-0">
               <Cpu className="w-12 h-12 text-gray-400" />
             </div>
             <div className="grid grid-cols-2 gap-x-8 gap-y-3 text-sm flex-1">
@@ -547,8 +514,8 @@ function MachineDetail({
                 ["Speed", `${machine.speed} sheets/hr`],
               ].map(([label, value]) => (
                 <div key={label}>
-                  <p className="text-xs text-gray-400 mb-0.5">{label}</p>
-                  <p className="font-semibold text-gray-900 dark:text-gray-100">{value}</p>
+                  <p className="text-xs text-gray-500 mb-0.5">{label}</p>
+                  <p className="font-semibold text-gray-900">{value}</p>
                 </div>
               ))}
             </div>
@@ -558,19 +525,19 @@ function MachineDetail({
       {activeJob ? (
         <JobStatusPanel order={activeJob.order} schedule={activeJob.schedule} machines={machines} />
       ) : (
-        <div className="bg-white dark:bg-gray-900 rounded-xl border border-gray-200 dark:border-gray-800 p-5 flex items-center justify-between">
-          <h3 className="text-base font-semibold text-gray-900 dark:text-gray-100">Job Status</h3>
+        <div className="bg-white rounded-xl border border-gray-200 p-5 flex items-center justify-between shadow-sm">
+          <h3 className="text-base font-semibold text-gray-900">Job Status</h3>
           <span className="text-sm text-gray-500 font-medium">Standby / No active order</span>
         </div>
       )}
 
-      <div className="bg-white dark:bg-gray-900 rounded-xl border border-gray-200 dark:border-gray-800 p-5">
-        <h3 className="text-sm font-semibold text-gray-900 dark:text-gray-100 mb-1">Machine Runtime Overview</h3>
+      <div className="bg-white rounded-xl border border-gray-200 p-5 shadow-sm">
+        <h3 className="text-sm font-semibold text-gray-900 mb-1">Machine Runtime Overview</h3>
         <p className="text-xs text-gray-500 mb-3">
-          Current Shift Duration: <span className="font-semibold text-gray-900 dark:text-gray-100">5 Hrs 00 Mins</span>
+          Current Shift Duration: <span className="font-semibold text-gray-900">5 Hrs 00 Mins</span>
           {machine.status === "busy" && machine.queue[0] && (
             <span className="ml-3">
-              Active Job: <span className="font-semibold text-emerald-600">Order {machine.queue[0].orderId}</span>
+              Active Job: <span className="font-semibold text-emerald-700">Order {machine.queue[0].orderId}</span>
             </span>
           )}
         </p>
@@ -588,34 +555,34 @@ function MachineDetail({
             </div>
           ))}
         </div>
-        <div className="flex h-8 rounded-lg overflow-hidden w-full">
+        <div className="flex h-8 rounded-lg overflow-hidden w-full border border-gray-200">
           {dynamicRuntimeSegments.map((segment, index) => (
-            <div 
-              key={index} 
-              title={`${segment.label} (${segment.pct}%)`} 
-              style={{ width: `${segment.pct}%`, background: segment.color }} 
+            <div
+              key={index}
+              title={`${segment.label} (${segment.pct}%)`}
+              style={{ width: `${segment.pct}%`, background: segment.color }}
               className="transition-all duration-500"
             />
           ))}
         </div>
-        <div className="flex justify-between text-xs text-gray-400 mt-1">
+        <div className="flex justify-between text-xs text-gray-500 mt-1">
           <span>{formatTime(shiftStartTime)}</span>
-          <span className="text-gray-600 dark:text-gray-300 font-medium">
-            {machine.status === "busy" ? "In Progress" : 
-             machine.status === "breakdown" ? "Breakdown" : 
+          <span className="text-gray-700 font-medium">
+            {machine.status === "busy" ? "In Progress" :
+             machine.status === "breakdown" ? "Breakdown" :
              machine.status === "backup" ? "Standby" : "Idle"}
           </span>
           <span>{formatTime(shiftEndTime)}</span>
         </div>
       </div>
 
-      <div className="bg-white dark:bg-gray-900 rounded-xl border border-gray-200 dark:border-gray-800">
-        <div className="flex border-b border-gray-200 dark:border-gray-800 px-5 overflow-x-auto">
+      <div className="bg-white rounded-xl border border-gray-200 shadow-sm">
+        <div className="flex border-b border-gray-200 px-5 overflow-x-auto">
           {DETAIL_TABS.map((detailTab) => (
             <button
               key={detailTab}
               onClick={() => setTab(detailTab)}
-              className={`px-4 py-3 text-sm whitespace-nowrap border-b-2 transition-colors ${tab === detailTab ? "border-blue-600 text-blue-700 dark:text-blue-400 font-medium" : "border-transparent text-gray-500 hover:text-gray-700 dark:hover:text-gray-300"}`}
+              className={`px-4 py-3 text-sm whitespace-nowrap border-b-2 transition-colors ${tab === detailTab ? "border-blue-600 text-blue-700 font-medium" : "border-transparent text-gray-500 hover:text-gray-700"}`}
             >
               {detailTab}
             </button>
@@ -633,9 +600,9 @@ function MachineDetail({
                 ["Paper Types", machine.paperTypes.join(", ")],
                 ["Idle Time", extra.idleTime],
               ].map(([label, value]) => (
-                <div key={label} className="bg-gray-50 dark:bg-gray-800 rounded-lg p-3">
-                  <p className="text-xs text-gray-400 mb-0.5">{label}</p>
-                  <p className="font-semibold text-gray-900 dark:text-gray-100">{value}</p>
+                <div key={label} className="bg-gray-50 border border-gray-200 rounded-lg p-3">
+                  <p className="text-xs text-gray-500 mb-0.5">{label}</p>
+                  <p className="font-semibold text-gray-900">{value}</p>
                 </div>
               ))}
             </div>
@@ -644,20 +611,20 @@ function MachineDetail({
           {tab === "Job History" && (
             dynamicJobHistory.length === 0
               ? <p className="text-sm text-gray-400 text-center py-6">No job history for this machine.</p>
-              : <div className="divide-y divide-gray-100 dark:divide-gray-800">
-                  <div className="grid grid-cols-4 text-xs font-medium text-gray-400 uppercase pb-2">
+              : <div className="divide-y divide-gray-100">
+                  <div className="grid grid-cols-4 text-xs font-medium text-gray-500 uppercase pb-2">
                     <span>Date</span><span>Job</span><span>Qty</span><span>Status</span>
                   </div>
                   {dynamicJobHistory.slice(0, 10).map((job, index) => (
                     <div key={index} className="grid grid-cols-4 py-2.5 text-sm">
                       <span className="text-gray-500">{job.date}</span>
-                      <span className="text-gray-800 dark:text-gray-200">{job.job}</span>
-                      <span className="text-gray-600 dark:text-gray-400">{job.qty.toLocaleString()}</span>
-                      <span className={`text-xs font-medium ${job.status === "Completed" ? "text-emerald-600" : "text-amber-600"}`}>{job.status}</span>
+                      <span className="text-gray-800">{job.job}</span>
+                      <span className="text-gray-600">{job.qty.toLocaleString()}</span>
+                      <span className={`text-xs font-medium ${job.status === "Completed" ? "text-emerald-700" : "text-amber-700"}`}>{job.status}</span>
                     </div>
                   ))}
                   {machine.queue.filter((job) => job.status === "queued" || job.status === "paused").length > 0 && (
-                    <div className="pt-3 mt-3 border-t border-gray-200 dark:border-gray-700">
+                    <div className="pt-3 mt-3 border-t border-gray-200">
                       <p className="text-xs font-medium text-gray-500 uppercase mb-2">Upcoming & Paused Jobs</p>
                       {machine.queue.filter((job) => job.status === "queued" || job.status === "paused").map((job, index) => {
                         const isPaused = job.status === "paused";
@@ -665,12 +632,12 @@ function MachineDetail({
                         return (
                           <div key={`queued-${index}`} className="grid grid-cols-4 py-2 text-sm items-center">
                             <span className="text-gray-500">{isPaused ? "Paused" : "Pending"}</span>
-                            <span className="text-gray-800 dark:text-gray-200">Order {job.orderId}</span>
+                            <span className="text-gray-800">Order {job.orderId}</span>
                             <div className="flex flex-col">
-                              <span className="text-gray-600 dark:text-gray-400">{job.assignedQty.toLocaleString()}</span>
-                              {isPaused && pct > 0 && <span className="text-[10px] leading-tight text-amber-600">({pct}% done)</span>}
+                              <span className="text-gray-600">{job.assignedQty.toLocaleString()}</span>
+                              {isPaused && pct > 0 && <span className="text-[10px] leading-tight text-amber-700">({pct}% done)</span>}
                             </div>
-                            <span className={`text-xs font-medium ${isPaused ? "text-amber-600" : "text-blue-600"}`}>{isPaused ? "Preempted" : "Queued"}</span>
+                            <span className={`text-xs font-medium ${isPaused ? "text-amber-700" : "text-blue-600"}`}>{isPaused ? "Preempted" : "Queued"}</span>
                           </div>
                         );
                       })}
@@ -683,26 +650,26 @@ function MachineDetail({
             <div>
               <div className="grid grid-cols-1 md:grid-cols-4 gap-4 mb-5">
                 {[
-                  { 
-                    label: "Total Downtime", 
-                    value: machine.status === "breakdown" ? "Ongoing" : dynamicDowntimeLogs.length > 0 ? "6 hr 45 Mins" : "0 hr" 
+                  {
+                    label: "Total Downtime",
+                    value: machine.status === "breakdown" ? "Ongoing" : dynamicDowntimeLogs.length > 0 ? "6 hr 45 Mins" : "0 hr"
                   },
-                  { 
-                    label: "Scheduled Maintenance events", 
-                    value: dynamicDowntimeLogs.filter((log) => log.reason.toLowerCase().includes("maintenance") || log.reason.toLowerCase().includes("scheduled")).length.toString() 
+                  {
+                    label: "Scheduled Maintenance events",
+                    value: dynamicDowntimeLogs.filter((log) => log.reason.toLowerCase().includes("maintenance") || log.reason.toLowerCase().includes("scheduled")).length.toString()
                   },
-                  { 
-                    label: "Unscheduled Breakdowns", 
-                    value: dynamicDowntimeLogs.filter((log) => !log.reason.toLowerCase().includes("maintenance") && !log.reason.toLowerCase().includes("scheduled")).length.toString() 
+                  {
+                    label: "Unscheduled Breakdowns",
+                    value: dynamicDowntimeLogs.filter((log) => !log.reason.toLowerCase().includes("maintenance") && !log.reason.toLowerCase().includes("scheduled")).length.toString()
                   },
-                  { 
-                    label: "Average Downtime Per Event", 
-                    value: dynamicDowntimeLogs.length > 0 ? "1 hr 7 min" : "N/A" 
+                  {
+                    label: "Average Downtime Per Event",
+                    value: dynamicDowntimeLogs.length > 0 ? "1 hr 7 min" : "N/A"
                   },
                 ].map((stat) => (
-                  <div key={stat.label} className="bg-gray-50 dark:bg-gray-800 rounded-lg p-3">
-                    <p className="text-xs text-gray-400 mb-1">{stat.label}</p>
-                    <p className="text-lg font-bold text-gray-900 dark:text-gray-100">{stat.value}</p>
+                  <div key={stat.label} className="bg-gray-50 border border-gray-200 rounded-lg p-3">
+                    <p className="text-xs text-gray-500 mb-1">{stat.label}</p>
+                    <p className="text-lg font-bold text-gray-900">{stat.value}</p>
                   </div>
                 ))}
               </div>
@@ -712,22 +679,22 @@ function MachineDetail({
                 <div className="overflow-x-auto">
                   <table className="w-full text-sm">
                     <thead>
-                      <tr className="border-b border-gray-200 dark:border-gray-700">
+                      <tr className="border-b border-gray-200">
                         {["Date", "Start Time", "Duration", "Reason", "Action Taken", "Logged By", "Job Impact"].map((heading) => (
-                          <th key={heading} className="text-left text-xs font-medium text-gray-400 pb-2 pr-4">{heading}</th>
+                          <th key={heading} className="text-left text-xs font-medium text-gray-500 pb-2 pr-4">{heading}</th>
                         ))}
                       </tr>
                     </thead>
-                    <tbody className="divide-y divide-gray-100 dark:divide-gray-800">
+                    <tbody className="divide-y divide-gray-100">
                       {dynamicDowntimeLogs.map((log, index) => (
-                        <tr key={index} className={log.duration === "Ongoing" ? "bg-red-50 dark:bg-red-900/10" : ""}>
+                        <tr key={index} className={log.duration === "Ongoing" ? "bg-red-50" : ""}>
                           <td className="py-2.5 pr-4 text-gray-500 whitespace-nowrap">{log.date}</td>
                           <td className="py-2.5 pr-4 text-gray-500 whitespace-nowrap">{log.start}</td>
-                          <td className={`py-2.5 pr-4 whitespace-nowrap font-medium ${log.duration === "Ongoing" ? "text-red-600 dark:text-red-400" : "text-gray-700 dark:text-gray-300"}`}>{log.duration}</td>
-                          <td className="py-2.5 pr-4 text-gray-700 dark:text-gray-300">{log.reason}</td>
-                          <td className="py-2.5 pr-4 text-gray-700 dark:text-gray-300">{log.action}</td>
+                          <td className={`py-2.5 pr-4 whitespace-nowrap font-medium ${log.duration === "Ongoing" ? "text-red-600" : "text-gray-700"}`}>{log.duration}</td>
+                          <td className="py-2.5 pr-4 text-gray-700">{log.reason}</td>
+                          <td className="py-2.5 pr-4 text-gray-700">{log.action}</td>
                           <td className="py-2.5 pr-4 text-gray-500">{log.loggedBy}</td>
-                          <td className="py-2.5 text-blue-600 dark:text-blue-400 font-medium">{log.impact}</td>
+                          <td className="py-2.5 text-blue-600 font-medium">{log.impact}</td>
                         </tr>
                       ))}
                     </tbody>
@@ -740,9 +707,9 @@ function MachineDetail({
           {tab === "AI Suggestions" && (
             <div className="space-y-3">
               {extra.aiSuggestions.map((suggestion, index) => (
-                <div key={index} className="flex items-start gap-3 bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-800 rounded-lg p-4">
+                <div key={index} className="flex items-start gap-3 bg-blue-50 border border-blue-200 rounded-lg p-4">
                   <Bot className="w-4 h-4 text-blue-600 flex-shrink-0 mt-0.5" />
-                  <p className="text-sm text-blue-800 dark:text-blue-200">{suggestion}</p>
+                  <p className="text-sm text-blue-900">{suggestion}</p>
                 </div>
               ))}
             </div>
@@ -811,9 +778,9 @@ export function MachinesPage({ machines, orders, lastSchedule, onFailure, onRese
   }
 
   return (
-    <div className="space-y-5">
+    <div className="space-y-6 bg-gray-100 p-6 rounded-xl">
       <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
-        <h2 className="text-lg font-bold text-gray-900 dark:text-gray-100">Machines ({machines.length})</h2>
+        <h2 className="text-lg font-bold text-gray-900">Machines ({machines.length})</h2>
         <div className="relative w-full md:w-72">
           <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" />
           <input
@@ -821,12 +788,12 @@ export function MachinesPage({ machines, orders, lastSchedule, onFailure, onRese
             placeholder="Search machines"
             value={search}
             onChange={(event) => setSearch(event.target.value)}
-            className="w-full pl-9 pr-3 py-2 text-sm border border-gray-300 dark:border-gray-700 rounded-lg bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100 focus:outline-none focus:ring-2 focus:ring-blue-500"
+            className="w-full pl-9 pr-3 py-2 text-sm border border-gray-300 rounded-lg bg-white text-gray-900 placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-blue-500"
           />
         </div>
       </div>
 
-      <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
+      <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-6">
         {filteredMachines.map((machine) => {
           const cfg = STATUS_CONFIG[machine.status] || STATUS_CONFIG.available;
           const extra = MACHINE_EXTRA[machine.id];
@@ -835,11 +802,11 @@ export function MachinesPage({ machines, orders, lastSchedule, onFailure, onRese
             <button
               key={machine.id}
               onClick={() => setSelectedMachine(machine)}
-              className="bg-white dark:bg-gray-900 rounded-xl border border-gray-200 dark:border-gray-800 p-4 text-left hover:border-blue-500 transition-colors"
+              className="bg-white rounded-xl border border-gray-200 p-5 text-left hover:border-blue-500 hover:shadow-md transition-all shadow-sm"
             >
               <div className="flex items-start justify-between mb-2 gap-3">
                 <div>
-                  <p className="text-2xl font-bold text-gray-900 dark:text-gray-100">{machine.id}</p>
+                  <p className="text-2xl font-bold text-gray-900">{machine.id}</p>
                   <p className="text-xs text-gray-500 mt-0.5">{machine.speed} sheets/hr - {machine.capacity.toLocaleString()}/day</p>
                 </div>
                 <div className="flex items-center gap-1.5">
@@ -847,19 +814,19 @@ export function MachinesPage({ machines, orders, lastSchedule, onFailure, onRese
                   <Badge variant={cfg.badge}>{cfg.label}</Badge>
                 </div>
               </div>
-              <p className="text-sm font-medium text-gray-800 dark:text-gray-200 mb-1">{extra?.name || machine.id}</p>
-              <p className="text-xs text-gray-400 mb-2">Papers: {machine.paperTypes.join(", ")}</p>
+              <p className="text-sm font-medium text-gray-700 mb-1">{extra?.name || machine.id}</p>
+              <p className="text-xs text-gray-500 mb-2">Papers: {machine.paperTypes.join(", ")}</p>
               {machine.assignedOrderId && (
-                <p className="text-xs text-blue-600 dark:text-blue-400 mb-2">Assigned: {machine.assignedOrderId}</p>
+                <p className="text-xs text-blue-600 mb-2 font-medium">Assigned: {machine.assignedOrderId}</p>
               )}
               <LiveJobProgress machine={machine} />
               {machine.queue.length > 1 && (
                 <div className="mt-1 flex flex-col gap-0.5">
-                  <p className="text-xs text-amber-600 dark:text-amber-400">
+                  <p className="text-xs text-amber-700">
                     {machine.queue.length - 1} queued behind current job
                   </p>
                   {machine.queue.some((j) => j.status === "paused") && (
-                    <p className="text-xs font-medium text-red-500">
+                    <p className="text-xs font-medium text-red-600">
                       Contains paused/preempted work
                     </p>
                   )}
@@ -870,19 +837,19 @@ export function MachinesPage({ machines, orders, lastSchedule, onFailure, onRese
         })}
       </div>
 
-      <div className="bg-white dark:bg-gray-900 rounded-xl border border-gray-200 dark:border-gray-800 p-5">
+      <div className="bg-white rounded-xl border border-gray-200 p-5 shadow-sm">
         <div className="flex items-center gap-2 mb-2">
-          <AlertTriangle className="w-4 h-4 text-amber-500" />
-          <h3 className="text-sm font-semibold text-gray-900 dark:text-gray-100">Breakdown simulator</h3>
+          <AlertTriangle className="w-4 h-4 text-amber-600" />
+          <h3 className="text-sm font-semibold text-gray-900">Breakdown simulator</h3>
         </div>
-        <p className="text-xs text-gray-500 dark:text-gray-400 mb-4">
+        <p className="text-xs text-gray-500 mb-4">
           Simulate a mid-run machine failure. The AI will automatically reassign remaining work to the backup machine and recalculate SLA.
         </p>
         <div className="flex items-center gap-3 flex-wrap">
           <select
             value={failTarget}
             onChange={(event) => setFailTarget(event.target.value)}
-            className="px-3 py-2 text-sm border border-gray-300 dark:border-gray-700 rounded-lg bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100 focus:outline-none focus:ring-2 focus:ring-blue-500"
+            className="px-3 py-2 text-sm border border-gray-300 rounded-lg bg-white text-gray-900 focus:outline-none focus:ring-2 focus:ring-blue-500"
           >
             {machines
               .filter((machine) => machine.status === "available" || machine.status === "busy")
@@ -891,14 +858,14 @@ export function MachinesPage({ machines, orders, lastSchedule, onFailure, onRese
           <button
             onClick={triggerFailure}
             disabled={loading}
-            className="flex items-center gap-2 px-4 py-2 bg-red-600 text-white text-sm font-medium rounded-lg hover:bg-red-700 disabled:opacity-60 transition-colors"
+            className="flex items-center gap-2 px-4 py-2 bg-red-600 hover:bg-red-700 text-white text-sm font-medium rounded-lg disabled:opacity-60 transition-colors"
           >
             {loading ? <Loader2 className="w-4 h-4 animate-spin" /> : <AlertTriangle className="w-4 h-4" />}
             {loading ? "Simulating..." : "Trigger breakdown"}
           </button>
           <button
             onClick={() => { onReset(); setNotif([]); }}
-            className="flex items-center gap-2 px-4 py-2 border border-gray-300 dark:border-gray-700 text-sm text-gray-700 dark:text-gray-300 rounded-lg hover:bg-gray-50 dark:hover:bg-gray-800 transition-colors"
+            className="flex items-center gap-2 px-4 py-2 border border-gray-300 bg-white text-sm text-gray-700 rounded-lg hover:bg-gray-50 transition-colors"
           >
             <RefreshCw className="w-4 h-4" /> Reset
           </button>
@@ -909,7 +876,13 @@ export function MachinesPage({ machines, orders, lastSchedule, onFailure, onRese
             {notif.map((item, index) => (
               <div
                 key={index}
-                className={`px-4 py-2.5 rounded-lg text-sm flex items-start gap-2 ${item.type === "warn" ? "bg-amber-50 dark:bg-amber-900/20 text-amber-800 dark:text-amber-300 border border-amber-200 dark:border-amber-800" : item.type === "success" ? "bg-emerald-50 dark:bg-emerald-900/20 text-emerald-800 dark:text-emerald-300 border border-emerald-200 dark:border-emerald-800" : "bg-blue-50 dark:bg-blue-900/20 text-blue-800 dark:text-blue-300 border border-blue-200 dark:border-blue-800"}`}
+                className={`px-4 py-2.5 rounded-lg text-sm flex items-start gap-2 border ${
+                  item.type === "warn"
+                    ? "bg-amber-50 text-amber-900 border-amber-200"
+                    : item.type === "success"
+                    ? "bg-emerald-50 text-emerald-900 border-emerald-200"
+                    : "bg-blue-50 text-blue-900 border-blue-200"
+                }`}
               >
                 {item.type === "warn" ? <AlertTriangle className="w-4 h-4 flex-shrink-0 mt-0.5" /> : <Zap className="w-4 h-4 flex-shrink-0 mt-0.5" />}
                 {item.msg}

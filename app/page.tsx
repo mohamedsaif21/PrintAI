@@ -1,12 +1,13 @@
 "use client";
 import { useState, useEffect, useCallback, useRef } from "react";
+import { Bell } from "lucide-react";
 import { Sidebar } from "@/components/Sidebar";
 import { DashboardPage } from "@/components/DashboardPage";
 import { OrdersPage } from "@/components/OrdersPage";
 import { MachinesPage } from "@/components/MachinesPage";
 import { SchedulePage } from "@/components/SchedulePage";
 import { ReportsPage } from "@/components/ReportsPage";
-import { Order, Machine, OrderStatus, ScheduleResult, ScheduledTask, PreemptionEvent, QueuedJob } from "@/types";
+import { Order, Machine, OrderStatus, ScheduleResult, ScheduledTask, PreemptionEvent, QueuedJob, Material } from "@/types";
 import { DEFAULT_MACHINES, dispatchScheduleToMachines, normaliseMachine, seedM2WithRunningJob, tickMachines, SEED_M2_ORDER_ID } from "@/lib/scheduler";
 import { computeSlaStatus } from "@/lib/safeMath";
 
@@ -25,6 +26,7 @@ export default function Home() {
   const [lastSchedule, setLastSchedule] = useState<ScheduleResult | null>(null);
   const [lastOrder, setLastOrder] = useState<Order | null>(null);
   const [notifications, setNotifications] = useState<Notif[]>([]);
+  const [materialsList, setMaterialsList] = useState<Material[]>([]);
   const machinesRef = useRef<Machine[]>(machines);
   const ordersRef = useRef<Order[]>(orders);
   const [scheduleMap, setScheduleMap] = useState<ScheduleMap>(() => {
@@ -61,17 +63,81 @@ export default function Home() {
     try {
       const res = await fetch("/api/machines");
       const data = await res.json();
-      setMachines(seedM2WithRunningJob((data.machines || DEFAULT_MACHINES).map(normaliseMachine)));
+      const list: Machine[] = (data.machines || DEFAULT_MACHINES).map(normaliseMachine);
+      
+      const sanitized = list.map((m) => {
+        if (m.id !== "M2" && m.queue.length === 0 && m.status === "busy") {
+          return {
+            ...m,
+            status: m.id === "M5" ? ("backup" as const) : ("available" as const),
+            utilisation: 0,
+            assignedOrderId: undefined,
+          };
+        }
+        return m;
+      });
+
+      sanitized.sort((a, b) => a.id.localeCompare(b.id));
+      setMachines(seedM2WithRunningJob(sanitized));
     } catch {
-      setMachines(seedM2WithRunningJob(DEFAULT_MACHINES));
+      const list = [...DEFAULT_MACHINES].sort((a, b) => a.id.localeCompare(b.id));
+      setMachines(seedM2WithRunningJob(list));
+    }
+  }, []);
+
+  const loadMaterials = useCallback(async () => {
+    try {
+      const res = await fetch("/api/materials");
+      if (res.ok) {
+        const data = await res.json();
+        setMaterialsList(data || []);
+      }
+    } catch (err) {
+      console.error("Failed to load materials:", err);
     }
   }, []);
 
   useEffect(() => {
     void Promise.resolve().then(() => {
-      void Promise.all([loadOrders(), loadMachines()]);
+      void Promise.all([loadOrders(), loadMachines(), loadMaterials()]);
     });
-  }, [loadOrders, loadMachines]);
+  }, [loadOrders, loadMachines, loadMaterials]);
+
+  // Reconcile machine busy status with existing orders (heal state if database/local queues are out of sync)
+  useEffect(() => {
+    if (machines.length === 0) return;
+    
+    let changed = false;
+    const reconciled = machines.map((m) => {
+      if (m.status === "busy" && m.assignedOrderId && m.assignedOrderId !== SEED_M2_ORDER_ID) {
+        const orderExists = orders.some((o) => o.id === m.assignedOrderId && o.status !== "Completed" && o.status !== "Rejected");
+        if (!orderExists) {
+          changed = true;
+          const nextStatus = m.id === "M5" ? "backup" as const : "available" as const;
+          return {
+            ...m,
+            status: nextStatus,
+            utilisation: 0,
+            assignedOrderId: undefined,
+            queue: m.queue.filter((q) => q.orderId !== m.assignedOrderId),
+          };
+        }
+      }
+      return m;
+    });
+    
+    if (changed) {
+      setMachines(reconciled);
+      // Update database in background
+      reconciled.forEach((m) => {
+        fetch("/api/machines", {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ id: m.id, status: m.status, utilisation: 0 }),
+        }).catch(() => {});
+      });
+    }
+  }, [orders, machines]);
 
   useEffect(() => {
     const id = setInterval(() => {
@@ -136,6 +202,8 @@ export default function Home() {
           method: "PATCH",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ id: orderId, status: "Completed" }),
+        }).then(() => {
+          void loadMaterials();
         }).catch((err) => {
           console.error("Failed to persist order completion:", err);
           pushNotif(`Warning: ${orderId} completion not saved to database`, "warn");
@@ -206,6 +274,7 @@ export default function Home() {
     });
     pushNotif(`${order.id} scheduled — ETA ${new Date(schedule.overallFinish).toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit" })}, SLA ${schedule.slaStatus}`, schedule.slaStatus === "SAFE" ? "success" : "warn");
     setPage("schedule");
+    void loadMaterials();
   }
 
   function handleReassignOrders(orderIds: string[], targetMachineId: string) {
@@ -334,6 +403,92 @@ export default function Home() {
     });
 
     pushNotif(`Manually reassigned ${orderIds.length} job(s) to ${targetMachineId}`, "success");
+    void loadMaterials();
+  }
+
+  async function handleDeleteOrder(orderId: string) {
+    try {
+      const res = await fetch(`/api/orders/${orderId}`, {
+        method: "DELETE",
+      });
+      if (!res.ok) throw new Error("Failed to delete order");
+
+      setOrders((prev) => prev.filter((o) => o.id !== orderId));
+      setMachines((prev) =>
+        prev.map((m) => {
+          const newQueue = m.queue.filter((job) => job.orderId !== orderId);
+          if (newQueue.length === m.queue.length) return m;
+
+          // If we removed the currently active job, and the next job is 'queued',
+          // mark it as 'paused' so the tick engine will automatically start it cleanly.
+          if (newQueue.length > 0 && m.queue[0].orderId === orderId && newQueue[0].status === "queued") {
+            newQueue[0] = { ...newQueue[0], status: "paused" as const };
+          }
+
+          const newStatus = newQueue.length === 0 && m.status === "busy" 
+            ? (m.id === "M5" ? "backup" as const : "available" as const) 
+            : m.status;
+
+          return {
+            ...m,
+            queue: newQueue,
+            status: newStatus,
+            assignedOrderId: newQueue.length > 0 ? newQueue[0].orderId : undefined,
+            utilisation: newQueue.length === 0 ? 0 : m.utilisation,
+          };
+        })
+      );
+      pushNotif(`Order ${orderId} deleted successfully`, "success");
+      void loadMaterials();
+    } catch (err) {
+      console.error(err);
+      pushNotif(`Failed to delete order ${orderId}`, "warn");
+    }
+  }
+
+  async function handleOrderStatusUpdate(orderId: string, status: Order["status"]) {
+    try {
+      const res = await fetch("/api/orders", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ id: orderId, status }),
+      });
+      if (!res.ok) throw new Error("Failed to update status");
+
+      setOrders((prev) => prev.map((o) => (o.id === orderId ? { ...o, status } : o)));
+
+      if (status === "Completed") {
+        setMachines((prev) =>
+          prev.map((m) => {
+            const newQueue = m.queue.filter((job) => job.orderId !== orderId);
+            if (newQueue.length === m.queue.length) return m;
+
+            // If we removed the currently active job, and the next job is 'queued',
+            // mark it as 'paused' so the tick engine will automatically start it cleanly.
+            if (newQueue.length > 0 && m.queue[0].orderId === orderId && newQueue[0].status === "queued") {
+              newQueue[0] = { ...newQueue[0], status: "paused" as const };
+            }
+
+            const newStatus = newQueue.length === 0 && m.status === "busy" 
+              ? (m.id === "M5" ? "backup" as const : "available" as const) 
+              : m.status;
+
+            return {
+              ...m,
+              queue: newQueue,
+              status: newStatus,
+              assignedOrderId: newQueue.length > 0 ? newQueue[0].orderId : undefined,
+              utilisation: newQueue.length === 0 ? 0 : m.utilisation,
+            };
+          })
+        );
+      }
+      pushNotif(`Order ${orderId} marked as ${status}`, "success");
+      void loadMaterials();
+    } catch (err) {
+      console.error(err);
+      pushNotif(`Failed to update status for ${orderId}`, "warn");
+    }
   }
 
   function handleApprovalDecision(orderId: string, status: any) {
@@ -372,6 +527,8 @@ export default function Home() {
       method: "PATCH",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ id: orderId, status }),
+    }).then(() => {
+      void loadMaterials();
     }).catch(() => {});
   }
 
@@ -501,6 +658,40 @@ export default function Home() {
     );
   }
 
+  const getDynamicMaterials = (): Material[] => {
+    return materialsList.map((mat) => {
+      let consumedFromAvailable = 0;
+      
+      machines.forEach((m) => {
+        m.queue.forEach((job) => {
+          if (job.status === "running") {
+            const order = orders.find((o) => o.id === job.orderId);
+            const paperType = order ? order.paperType : (m.paperTypes[0] || "Glossy");
+            
+            if (mat.name.toLowerCase().includes(paperType.toLowerCase())) {
+              const start = new Date(job.startedAt).getTime();
+              const finish = new Date(job.realFinishAt).getTime();
+              const now = Date.now();
+              const duration = finish - start;
+              const percent = duration > 0 ? Math.min(1, Math.max(0, (now - start) / duration)) : 0;
+              
+              consumedFromAvailable += Math.round(percent * job.assignedQty);
+            }
+          }
+        });
+      });
+      
+      const dynamicAvailable = Math.max(0, mat.available_stock - consumedFromAvailable);
+      
+      return {
+        ...mat,
+        // total_stock is the original total, it should not change dynamically here.
+        // available_stock is what we update for the UI to show live progress.
+        available_stock: dynamicAvailable
+      };
+    });
+  };
+
   const pageTitle: Record<string, string> = {
     dashboard: "Dashboard",
     orders: "Orders",
@@ -510,21 +701,49 @@ export default function Home() {
   };
 
   return (
-    <div className="flex h-screen overflow-hidden">
+    <div className="flex h-screen overflow-hidden" style={{ backgroundColor: 'rgb(242,243,248)' }}>
       <Sidebar active={page} onChange={setPage} />
       <div className="flex-1 flex flex-col overflow-hidden">
         {/* Top bar */}
-        <header className="h-14 border-b border-gray-200 dark:border-gray-800 bg-white dark:bg-gray-900 px-6 flex items-center justify-between flex-shrink-0">
-          <h1 className="text-base font-semibold text-gray-900 dark:text-gray-100">{pageTitle[page]}</h1>
-          <Clock />
+        <header className="h-16 px-6 flex items-center justify-between flex-shrink-0" style={{ backgroundColor: 'rgb(82, 82, 82)', borderBottom: '1px solid rgb(82, 82, 82)' }}>
+          <div>
+            <h1 className="text-sm font-semibold text-white leading-tight">{pageTitle[page]}</h1>
+            <p className="text-[10px] text-gray-300">Production Plan / {pageTitle[page]}</p>
+          </div>
+          
+          <div className="flex items-center gap-4">
+            <Clock />
+            <button className="p-1.5 rounded-full text-gray-300 hover:text-white hover:bg-gray-700/50 transition-colors">
+              <Bell className="w-5 h-5" />
+            </button>
+            <div className="w-px h-6 bg-gray-700" />
+            <div className="flex items-center gap-2">
+              <div className="w-8 h-8 rounded-full bg-blue-600 text-white text-xs font-semibold flex items-center justify-center">
+                PU
+              </div>
+              <div className="text-left hidden sm:block">
+                <p className="text-xs font-semibold text-white leading-none">Planner User</p>
+                <p className="text-[9px] text-gray-300 mt-0.5">Admin</p>
+              </div>
+            </div>
+          </div>
         </header>
         {/* Page content */}
         <main className="flex-1 overflow-y-auto p-6">
           {page === "dashboard" && (
-            <DashboardPage orders={orders} machines={machines} lastSchedule={lastSchedule} notifications={notifications} />
+            <DashboardPage orders={orders} machines={machines} lastSchedule={lastSchedule} notifications={notifications} materials={getDynamicMaterials()} rawMaterials={materialsList} onRestockComplete={loadMaterials} />
           )}
           {page === "orders" && (
-            <OrdersPage orders={orders} machines={machines} scheduleMap={scheduleMap} onScheduled={handleScheduled} onReassignOrders={handleReassignOrders} addNotification={pushNotif} />
+            <OrdersPage
+              orders={orders}
+              machines={machines}
+              scheduleMap={scheduleMap}
+              onScheduled={handleScheduled}
+              onReassignOrders={handleReassignOrders}
+              onOrderDeleted={handleDeleteOrder}
+              onOrderStatusUpdate={handleOrderStatusUpdate}
+              addNotification={pushNotif}
+            />
           )}
           {page === "machines" && (
             <MachinesPage machines={machines} orders={orders} lastSchedule={lastSchedule} onFailure={handleFailure} onReset={handleReset} />
@@ -549,5 +768,5 @@ function Clock() {
     const id = setInterval(tick, 1000);
     return () => clearInterval(id);
   }, []);
-  return <span className="text-xs text-gray-400 tabular-nums">{time}</span>;
+  return <span className="text-xs text-gray-200 tabular-nums">{time}</span>;
 }

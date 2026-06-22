@@ -2,7 +2,10 @@
 
 :root {
   --background: #ffffff;
-  --foreground: #171717;
+  --foreground: #111827;
+  --card-bg: #ffffff;
+  --sidebar-bg: rgb(9, 9, 10);
+  --header-bg: rgb(9, 9, 10);
 }
 
 @theme inline {
@@ -12,15 +15,37 @@
   --font-mono: var(--font-geist-mono);
 }
 
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
-  }
-}
-
 body {
-  background: var(--background);
+  background-color: rgb(242, 243, 248) !important;
   color: var(--foreground);
   font-family: Arial, Helvetica, sans-serif;
 }
+
+/* Sidebar button styling */
+aside button {
+  transition: all 0.2s ease !important;
+}
+
+aside button:hover {
+  background-color: rgba(255, 255, 255, 0.1) !important;
+  color: rgb(255, 255, 255) !important;
+}
+
+/* White cards with dark text */
+.custom-card {
+  background-color: var(--card-bg) !important;
+  color: #111827 !important;
+  border-color: #e5e7eb !important;
+}
+
+/* Search / input placeholder */
+input::placeholder,
+textarea::placeholder {
+  color: #9ca3af;
+}
+
+/* Match placeholder to card theme */
+.card-input::placeholder {
+  color: #d1d5db;
+}
+
