@@ -1,41 +1,94 @@
 @import "tailwindcss";
 
 :root {
-  --background: #ffffff;
-  --foreground: #111827;
-  --card-bg: #ffffff;
-  --sidebar-bg: rgb(9, 9, 10);
-  --header-bg: rgb(9, 9, 10);
+  /* Backgrounds */
+  --page-bg: #F2F3F6;
+  --elevated-surface: #FFFFFF;
+  --sidebar-bg: #1A1B1E;
+  --sidebar-hover: rgba(255, 255, 255, 0.08);
+  --sidebar-active: rgba(255, 255, 255, 0.12);
+  --topbar-bg: #1A1B1E;
+
+  /* Borders */
+  --border-default: #E2E4E9;
+  --border-strong: #CDD0D5;
+
+  /* Text */
+  --text-primary: #1A1B1E;
+  --text-secondary: #5F6570;
+  --text-muted: #949BA6;
+  --text-inverse: #FFFFFF;
+
+  /* Accent / Brand */
+  --accent: #3B6BFF;
+  --accent-hover: #2A54D5;
+  --accent-light: #EEF2FF;
+
+  /* Status colors */
+  --status-success: #10A068;
+  --status-success-bg: #EAF9F1;
+  --status-warning: #E8993A;
+  --status-warning-bg: #FFF7ED;
+  --status-danger: #D94A4A;
+  --status-danger-bg: #FEF2F2;
+  --status-info: #4A7BCF;
+  --status-info-bg: #EFF4FF;
+
+  /* Spacing scale */
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-5: 20px;
+  --space-6: 24px;
+  --space-8: 32px;
+  --space-10: 40px;
+  --space-12: 48px;
+
+  /* Radius */
+  --radius-sm: 4px;
+  --radius-md: 8px;
+  --radius-lg: 12px;
+
+  /* Shadows */
+  --shadow-elevated: 0 1px 3px rgba(0,0,0,0.06), 0 1px 2px rgba(0,0,0,0.04);
+  --shadow-popover: 0 4px 12px rgba(0,0,0,0.08), 0 2px 4px rgba(0,0,0,0.04);
+  --shadow-drawer: -4px 0 12px rgba(0,0,0,0.08);
+
+  /* Typography tokens */
+  --text-page-title: 20px;
+  --text-section-title: 14px;
+  --text-card-metric: 28px;
+  --text-card-label: 11px;
+  --text-table-header: 11px;
+  --text-table-cell: 13px;
+  --text-body: 14px;
+  --text-helper: 11px;
+  --text-badge: 10px;
 }
 
 @theme inline {
-  --color-background: var(--background);
-  --color-foreground: var(--foreground);
+  --color-background: var(--page-bg);
+  --color-foreground: var(--text-primary);
   --font-sans: var(--font-geist-sans);
   --font-mono: var(--font-geist-mono);
 }
 
 body {
-  background-color: rgb(242, 243, 248) !important;
-  color: var(--foreground);
+  background-color: var(--page-bg) !important;
+  color: var(--text-primary);
   font-family: Arial, Helvetica, sans-serif;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
 }
 
 /* Sidebar button styling */
 aside button {
-  transition: all 0.2s ease !important;
+  transition: all 0.15s ease !important;
 }
 
 aside button:hover {
-  background-color: rgba(255, 255, 255, 0.1) !important;
-  color: rgb(255, 255, 255) !important;
-}
-
-/* White cards with dark text */
-.custom-card {
-  background-color: var(--card-bg) !important;
-  color: #111827 !important;
-  border-color: #e5e7eb !important;
+  background-color: var(--sidebar-hover) !important;
 }
 
 /* Search / input placeholder */
@@ -44,8 +97,7 @@ textarea::placeholder {
   color: #9ca3af;
 }
 
-/* Match placeholder to card theme */
-.card-input::placeholder {
-  color: #d1d5db;
+/* Utility: monospace numbers */
+.tabular-nums {
+  font-variant-numeric: tabular-nums;
 }
-
