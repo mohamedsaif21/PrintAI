@@ -621,23 +621,10 @@ This project was developed as part of my **internship experience**.
 
 The internship certificate is included in this repository as supporting documentation.
 
-### 📄 View Internship Certificate
+### 📄 Internship Certificate
 
-<p align="center">
+ <img src="Attest letter.jpg" alt="PrintAI Production Planning Dashboard" width="100%">Attest letter.jpg
 
-<a href="./docs/internship-certificate.pdf">
-  <img src="https://img.shields.io/badge/📜%20Internship%20Certificate-View%20Certificate-red?style=for-the-badge" alt="Internship Certificate" />
-</a>
-
-</p>
-
-Certificate location:
-
-```text
-docs/internship-certificate.pdf
-```
-
----
 
 # 👨‍💻 Author
 
