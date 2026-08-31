@@ -42,22 +42,6 @@ PrintAI helps automate this process by intelligently planning production schedul
 
 ---
 
-# 🌐 Live Application
-
-The application can be accessed through the live deployment:
-
-<p align="center">
-
-<a href="YOUR_LIVE_APPLICATION_URL">
-  <img src="https://img.shields.io/badge/🚀%20OPEN%20PRINTAI-Live%20Application-blue?style=for-the-badge" alt="Open PrintAI" />
-</a>
-
-</p>
-
-> **Live Application:** `YOUR_LIVE_APPLICATION_URL`
-
----
-
 # 🎯 Project Objective
 
 The main goal of PrintAI is to make production planning more **automated, intelligent, and easier to monitor**.
