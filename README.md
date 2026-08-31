@@ -1,218 +1,677 @@
-# PrintAI - Production Planning with AI
+# PrintAI — AI-Powered Production Planning
 
-**PrintAI** is an AI-powered production scheduling system for printing factories. It intelligently schedules print orders across multiple machines using machine learning and provides real-time SLA compliance tracking with automatic failure recovery.
+<p align="center">
+  <img src="./docs/dashboard.png" alt="PrintAI Production Planning Dashboard" width="100%">
+</p>
 
-## 🎯 Features
+<p align="center">
+  <strong>AI-powered production scheduling and planning for printing factories.</strong>
+</p>
 
-- **AI-Powered Scheduling**: Uses Google Gemini AI to explain scheduling decisions
-- **Multi-Machine Allocation**: Proportional workload distribution based on machine speed and capacity
-- **Smart Queueing System**: Prevents task overlapping by calculating machine availability from existing schedules
-- **Paper Type Matching**: Intelligent filtering of machines by supported paper types
-- **SLA Compliance**: Real-time deadline tracking with risk alerts
-- **Failure Recovery**: Automatic rescheduling when machines break down
-- **Real-time Dashboard**: Live metrics on orders, machines, and SLA status
-- **Dark Mode Support**: Optimized UI for day and night work
-- **Planned Jobs Module**: Dedicated production plan dashboard with stage-based tracking (Pre-Press, Press, Post-Press)
-- **Bulk AI Optimisation**: Automatically reassess at-risk jobs and suggest machine reassignments
-- **Supabase Backend**: Persistent data storage with real-time synchronization
+<p align="center">
+  Next.js • TypeScript • Supabase • Google Gemini AI • Tailwind CSS
+</p>
 
-## 🚀 Quick Start
+<p align="center">
 
-### Prerequisites
+<a href="YOUR_LIVE_APPLICATION_URL">
+  <img src="https://img.shields.io/badge/🌐%20Live%20Application-Open%20PrintAI-blue?style=for-the-badge" alt="Live Application" />
+</a>
 
-- Node.js 18+
-- npm or yarn
-- Supabase account (free tier available)
-- Google Gemini API key
+<a href="YOUR_GITHUB_REPOSITORY_URL">
+  <img src="https://img.shields.io/badge/💻%20GitHub-Source%20Code-black?style=for-the-badge&logo=github" alt="GitHub Repository" />
+</a>
 
-### Installation
+</p>
 
-1. **Clone the repository**
+---
 
-   ```bash
-   git clone https://github.com/mohamedsaif21/PrintAI.git
-   cd PrintAI
-   ```
+# 📌 About PrintAI
 
-2. **Install dependencies**
+**PrintAI** is an AI-powered production planning and scheduling application designed for printing factories.
 
-   ```bash
-   npm install
-   ```
+In a printing environment, multiple orders need to be assigned to different machines while considering factors such as:
 
-3. **Set up environment variables**
+* Machine availability
+* Machine speed
+* Production capacity
+* Paper type
+* Order priority
+* Production workload
+* Delivery deadlines
+* SLA requirements
+* Machine failures
 
-   ```bash
-   cp .env.example .env.local
-   ```
+Managing these factors manually can be difficult and time-consuming.
 
-4. **Configure your `.env.local`**
+PrintAI helps automate this process by intelligently planning production schedules, monitoring SLA compliance, and providing recommendations when production risks occur.
 
-   **Supabase Setup:**
-   - Go to [supabase.com](https://supabase.com)
-   - Create a new project
-   - Copy `Project URL` → `NEXT_PUBLIC_SUPABASE_URL`
-   - Copy `Anon Key` → `NEXT_PUBLIC_SUPABASE_ANON_KEY`
-   - Run the SQL schema below
+---
 
-   **Gemini API Setup:**
-   - Go to [ai.google.dev](https://ai.google.dev)
-   - Create an API key
-   - Set `GEMINI_API_KEY` in `.env.local`
+# 🌐 Live Application
 
-5. **Set up Supabase Database**
+The application can be accessed through the live deployment:
 
-   Run this SQL in your Supabase SQL Editor (`Project → SQL Editor → New Query`):
+<p align="center">
 
-   ```sql
-   -- Orders table
-   create table if not exists orders (
-     id           text primary key,
-     customer     text not null,
-     product      text not null,
-     quantity     integer not null,
-     paper_type   text not null,
-     priority     text not null,
-     deadline     timestamptz not null,
-     status       text not null default 'Pending',
-     created_at   timestamptz not null default now()
-   );
+<a href="YOUR_LIVE_APPLICATION_URL">
+  <img src="https://img.shields.io/badge/🚀%20OPEN%20PRINTAI-Live%20Application-blue?style=for-the-badge" alt="Open PrintAI" />
+</a>
 
-   -- Machines table
-   create table if not exists machines (
-     id           text primary key,
-     speed        integer not null,
-     capacity     integer not null,
-     status       text not null default 'available',
-     paper_types  text[] not null default '{}',
-     utilisation  integer not null default 0
-   );
+</p>
 
-   -- Schedules table
-   create table if not exists schedules (
-     id           uuid primary key default gen_random_uuid(),
-     order_id     text references orders(id) on delete cascade,
-     tasks        jsonb not null,
-     overall_finish timestamptz not null,
-     sla_status   text not null,
-     sla_diff     integer not null,
-     explanation  text,
-     created_at   timestamptz not null default now()
-   );
+> **Live Application:** `YOUR_LIVE_APPLICATION_URL`
 
-   -- Seed machines
-   insert into machines (id, speed, capacity, status, paper_types, utilisation) values
-     ('M1', 500, 10000, 'available', array['Coated'], 0),
-     ('M2', 400,  8000, 'busy',      array['Glossy'], 0),
-     ('M3', 600, 12000, 'available', array['Matte'], 0),
-     ('M4', 450,  9000, 'available', array['Uncoated'], 0),
-     ('M5', 300,  6000, 'backup',    array['Coated','Glossy','Matte','Uncoated'], 0)
-   on conflict (id) do update set
-     speed = excluded.speed,
-     capacity = excluded.capacity,
-     paper_types = excluded.paper_types;
+---
 
-   -- Planned Jobs table
-   create table if not exists planned_jobs (
-     id text primary key,
-     order_id text references orders (id) on delete cascade,
-     facility text not null,
-     printing_status text not null,
-     wo_status text not null,
-     sla numeric not null,
-     ageing integer not null,
-     machine_name text not null,
-     schedule_date timestamptz not null,
-     ed_date timestamptz not null,
-     retailer text not null,
-     product_id text not null,
-     base_paper text not null,
-     current_wc text not null,
-     production_type text not null,
-     balance_qty integer not null,
-     balance_value numeric not null,
-     pi_number text not null,
-     wo_quantity integer not null,
-     no_of_plates integer not null,
-     cs_name text not null,
-     line_count integer not null,
-     next_wc text not null,
-     oos boolean not null default false,
-     stage text not null,
-     operator text not null,
-     shift text not null,
-     ai_suggestion text,
-     created_at timestamptz not null default now()
-   );
-   ```
+# 🎯 Project Objective
 
-6. **Run the development server**
+The main goal of PrintAI is to make production planning more **automated, intelligent, and easier to monitor**.
 
-   ```bash
-   npm run dev
-   ```
+The system helps production teams:
 
-7. **Open [http://localhost:3000](http://localhost:3000) in your browser**
+* Plan print orders
+* Allocate orders across machines
+* Match machines with paper types
+* Track production deadlines
+* Monitor SLA compliance
+* Identify production risks
+* Recover from machine failures
+* Optimize planned production jobs
 
-## 🔐 Security Setup
+---
 
-### Row Level Security (RLS) - Production Recommended
+# ✨ Key Features
 
-Enable RLS on all tables for data isolation:
+## 🤖 AI-Powered Scheduling
 
-```sql
-alter table orders enable row level security;
-alter table schedules enable row level security;
-alter table machines enable row level security;
+PrintAI uses **Google Gemini AI** to provide intelligent scheduling explanations and recommendations.
+
+The system can explain why a particular machine or scheduling decision was selected.
+
+---
+
+## 🏭 Multi-Machine Allocation
+
+Production orders can be distributed across multiple machines based on:
+
+* Machine speed
+* Machine capacity
+* Current workload
+* Machine availability
+* Paper compatibility
+
+This helps distribute production more efficiently.
+
+---
+
+## 📋 Smart Queue Management
+
+The system considers existing machine schedules before assigning new work.
+
+This helps prevent:
+
+* Overlapping jobs
+* Conflicting schedules
+* Unrealistic machine assignments
+
+---
+
+## 📄 Paper Type Matching
+
+Machines are filtered according to the paper types they support.
+
+For example:
+
+```text
+Order
+Paper Type: Coated
+
+        ↓
+
+Available Compatible Machines
+
+M1 → Coated ✓
+M2 → Glossy ✕
+M3 → Matte ✕
+M4 → Uncoated ✕
+M5 → Coated ✓
 ```
 
-### Error Monitoring (Optional)
+This helps ensure that jobs are assigned only to suitable machines.
 
-Integrated logger in `lib/logger.ts` ready for Sentry integration:
+---
 
-```typescript
-import { logError, logWarn, logInfo } from "@/lib/logger";
+## ⏱️ SLA Compliance
 
-logError(error, { userId: "user123" });
+PrintAI continuously evaluates production schedules against order deadlines.
+
+The dashboard can identify:
+
+* On-time jobs
+* At-risk jobs
+* Delayed jobs
+* SLA differences
+
+This helps production teams identify potential delivery problems earlier.
+
+---
+
+## 🔄 Failure Recovery
+
+If a machine becomes unavailable or breaks down, PrintAI can reassess the affected production schedule and recommend alternative machine assignments.
+
+This reduces the impact of unexpected machine failures.
+
+---
+
+## 📊 Real-Time Dashboard
+
+The dashboard provides a centralized view of production activity.
+
+It can display:
+
+* Total orders
+* Machine status
+* Production workload
+* SLA status
+* Planned jobs
+* At-risk production
+* Machine utilization
+
+---
+
+## 🗓️ Planned Jobs
+
+A dedicated **Planned Jobs** module provides a structured view of production plans.
+
+Jobs can be tracked across different production stages:
+
+```text
+Pre-Press
+    ↓
+Press
+    ↓
+Post-Press
 ```
 
-## 📊 API Endpoints
+This gives production teams better visibility into the current stage of each job.
 
-- `POST /api/schedule` - Create order with validation
-- `GET /api/orders` - Fetch orders
-- `PATCH /api/orders` - Update order status
-- `GET /api/machines` - Fetch machines
-- `PATCH /api/machines` - Update machine status
-- `GET /api/planned-jobs` - Fetch planned jobs with filtering
-- `PATCH /api/planned-jobs` - Update planned job details
-- `POST /api/planned-jobs/optimise` - Bulk AI optimization for at-risk jobs
+---
 
-## 🏗️ Architecture
+## ⚡ Bulk AI Optimization
 
-- `app/api/` - Validated API routes with error handling
-- `components/` - React components with ErrorBoundary
-- `lib/` - Business logic (scheduler, AI, validation, logging)
-- `types/` - TypeScript type definitions
+At-risk production jobs can be reassessed using AI.
 
-## 🧪 Testing
+The optimization process can:
+
+1. Identify jobs at risk
+2. Analyze available machines
+3. Evaluate production constraints
+4. Suggest alternative assignments
+5. Provide an AI-generated recommendation
+
+---
+
+## 🌙 Dark Mode
+
+The application supports both:
+
+* Light Mode
+* Dark Mode
+
+This makes the dashboard suitable for different working environments.
+
+---
+
+# 🔄 How PrintAI Works
+
+The overall workflow can be represented as:
+
+```text
+Production Order
+       ↓
+Order Validation
+       ↓
+Check Machine Availability
+       ↓
+Match Paper Type
+       ↓
+Evaluate Machine Capacity
+       ↓
+Calculate Production Schedule
+       ↓
+Check SLA Deadline
+       ↓
+Generate Schedule
+       ↓
+Monitor Production
+       ↓
+Detect Risk / Failure
+       ↓
+AI Optimization & Recovery
+```
+
+---
+
+# 🧠 AI Integration
+
+Google Gemini AI is integrated into the application to support intelligent production planning.
+
+AI is used for:
+
+* Scheduling explanations
+* Production recommendations
+* At-risk job reassessment
+* Machine reassignment suggestions
+* Production optimization
+
+The AI layer works alongside the application's scheduling and business logic rather than replacing the underlying production constraints.
+
+---
+
+# 🏗️ Application Architecture
+
+```text
+                         ┌───────────────┐
+                         │     User      │
+                         └───────┬───────┘
+                                 │
+                                 ▼
+                       ┌──────────────────┐
+                       │  PrintAI Dashboard│
+                       └─────────┬────────┘
+                                 │
+                                 ▼
+                       ┌──────────────────┐
+                       │   API Layer      │
+                       └─────────┬────────┘
+                                 │
+                    ┌────────────┴────────────┐
+                    │                         │
+                    ▼                         ▼
+            ┌───────────────┐        ┌────────────────┐
+            │ Scheduling    │        │ Google Gemini  │
+            │ Engine        │        │ AI             │
+            └───────┬───────┘        └───────┬────────┘
+                    │                         │
+                    └────────────┬────────────┘
+                                 │
+                                 ▼
+                       ┌──────────────────┐
+                       │     Supabase     │
+                       │    Database      │
+                       └──────────────────┘
+```
+
+---
+
+# 🛠️ Technology Stack
+
+| Technology           | Purpose                                     |
+| -------------------- | ------------------------------------------- |
+| **Next.js**          | Full-stack web application framework        |
+| **React**            | User interface development                  |
+| **TypeScript**       | Type-safe application development           |
+| **Tailwind CSS**     | Responsive UI styling                       |
+| **Supabase**         | Database and real-time data synchronization |
+| **Google Gemini AI** | AI-powered recommendations and explanations |
+| **Vercel**           | Application deployment                      |
+| **Git & GitHub**     | Version control                             |
+
+---
+
+# 📂 Project Structure
+
+```text
+PrintAI/
+│
+├── app/
+│   ├── api/
+│   │   ├── schedule/
+│   │   ├── orders/
+│   │   ├── machines/
+│   │   └── planned-jobs/
+│   │
+│   └── ...                     # Application pages
+│
+├── components/
+│   └── ...                     # Reusable React components
+│
+├── lib/
+│   ├── scheduler/              # Scheduling logic
+│   ├── ai/                     # AI integration
+│   ├── validation/             # Validation logic
+│   └── logger.ts               # Application logging
+│
+├── types/
+│   └── ...                     # TypeScript definitions
+│
+├── docs/
+│   ├── dashboard.png           # Dashboard screenshot
+│   └── internship-certificate.pdf
+│
+├── .env.example
+├── package.json
+├── next.config.*
+├── tailwind.config.*
+└── README.md
+```
+
+---
+
+# 📊 Main Application Modules
+
+### Orders
+
+Manage and monitor production orders including:
+
+* Customer
+* Product
+* Quantity
+* Paper type
+* Priority
+* Deadline
+* Status
+
+### Machines
+
+Monitor machine information such as:
+
+* Machine speed
+* Capacity
+* Availability
+* Supported paper types
+* Utilization
+
+### Scheduling
+
+Create production schedules while considering:
+
+* Machine availability
+* Existing schedules
+* Paper compatibility
+* Production capacity
+* SLA deadlines
+
+### Planned Jobs
+
+Track production jobs across:
+
+* Pre-Press
+* Press
+* Post-Press
+
+### AI Optimization
+
+Analyze at-risk jobs and provide machine reassignment recommendations.
+
+---
+
+# 🔌 API Endpoints
+
+| Method  | Endpoint                     | Purpose                          |
+| ------- | ---------------------------- | -------------------------------- |
+| `POST`  | `/api/schedule`              | Create and schedule an order     |
+| `GET`   | `/api/orders`                | Retrieve orders                  |
+| `PATCH` | `/api/orders`                | Update order status              |
+| `GET`   | `/api/machines`              | Retrieve machine information     |
+| `PATCH` | `/api/machines`              | Update machine status            |
+| `GET`   | `/api/planned-jobs`          | Retrieve planned jobs            |
+| `PATCH` | `/api/planned-jobs`          | Update planned job details       |
+| `POST`  | `/api/planned-jobs/optimise` | AI optimization for at-risk jobs |
+
+---
+
+# 🗄️ Database
+
+PrintAI uses **Supabase** for persistent application data and real-time synchronization.
+
+The main database entities include:
+
+```text
+Orders
+   │
+   ├── Schedules
+   │
+   └── Planned Jobs
+
+Machines
+   │
+   └── Machine Availability
+```
+
+### Main Tables
+
+* `orders`
+* `machines`
+* `schedules`
+* `planned_jobs`
+
+---
+
+# 🔐 Security
+
+Production deployments should use appropriate security controls, including:
+
+* Supabase Row Level Security (RLS)
+* Environment variables for API keys
+* Secure authentication
+* Protected database access
+* Secure deployment secrets
+
+Sensitive credentials should never be committed to the repository.
+
+---
+
+# 🚀 Getting Started
+
+## Prerequisites
+
+Make sure you have:
+
+* Node.js 18+
+* npm or Yarn
+* A Supabase account
+* A Google Gemini API key
+
+---
+
+## 1. Clone the Repository
+
+```bash
+git clone https://github.com/mohamedsaif21/PrintAI.git
+cd PrintAI
+```
+
+---
+
+## 2. Install Dependencies
+
+```bash
+npm install
+```
+
+---
+
+## 3. Configure Environment Variables
+
+Create a local environment file:
+
+```bash
+cp .env.example .env.local
+```
+
+Configure the required values:
+
+```env
+NEXT_PUBLIC_SUPABASE_URL=your_supabase_url
+NEXT_PUBLIC_SUPABASE_ANON_KEY=your_supabase_anon_key
+GEMINI_API_KEY=your_gemini_api_key
+```
+
+---
+
+## 4. Configure Supabase
+
+Create a Supabase project and configure the required database tables.
+
+The application uses Supabase for:
+
+* Data storage
+* Database operations
+* Real-time synchronization
+
+---
+
+## 5. Start the Development Server
+
+```bash
+npm run dev
+```
+
+Then open:
+
+```text
+http://localhost:3000
+```
+
+---
+
+# 🧪 Testing & Validation
+
+The project can be checked using the following commands:
 
 ```bash
 npm run lint
+```
+
+```bash
 npm run build
+```
+
+```bash
 npm start
 ```
 
-## 📝 Environment Variables
+These commands help verify code quality and production readiness.
 
-See `.env.example` for all required variables.
+---
 
-## 🚀 Deployment
+# ☁️ Deployment
 
-Deploy on Vercel with automatic environment variable configuration.
+PrintAI can be deployed using **Vercel**.
 
-## 📚 Learn More
+Basic deployment process:
 
-- [Next.js Documentation](https://nextjs.org/docs)
-- [Supabase Documentation](https://supabase.com/docs)
-- [Google Gemini API](https://ai.google.dev)
-- [Tailwind CSS](https://tailwindcss.com)
+```text
+GitHub Repository
+       ↓
+Connect to Vercel
+       ↓
+Configure Environment Variables
+       ↓
+Build Application
+       ↓
+Deploy
+       ↓
+Live PrintAI Application
+```
+
+Make sure the required Supabase and Gemini environment variables are configured in the deployment environment.
+
+---
+
+# 📈 Benefits
+
+PrintAI provides several benefits for production planning:
+
+* Reduces manual scheduling effort
+* Improves machine utilization
+* Prevents scheduling conflicts
+* Matches jobs with suitable machines
+* Provides early SLA risk visibility
+* Supports machine failure recovery
+* Centralizes production information
+* Enables AI-assisted decision making
+* Provides real-time production visibility
+
+---
+
+# 🔮 Future Enhancements
+
+Potential future improvements include:
+
+* Advanced production forecasting
+* Predictive machine maintenance
+* Historical production analytics
+* More advanced AI scheduling
+* Production cost optimization
+* Machine performance scoring
+* Automated notifications
+* Email and report generation
+* Advanced KPI dashboards
+* AI-based demand forecasting
+
+---
+
+# 📜 Internship Certificate
+
+This project was developed as part of my **internship experience**.
+
+The internship certificate is included in this repository as supporting documentation.
+
+### 📄 View Internship Certificate
+
+<p align="center">
+
+<a href="./docs/internship-certificate.pdf">
+  <img src="https://img.shields.io/badge/📜%20Internship%20Certificate-View%20Certificate-red?style=for-the-badge" alt="Internship Certificate" />
+</a>
+
+</p>
+
+Certificate location:
+
+```text
+docs/internship-certificate.pdf
+```
+
+---
+
+# 👨‍💻 Author
+
+## Mohamed Saif
+
+**Frontend Developer | AI & Web Development**
+
+Passionate about building modern web applications, AI-powered solutions, automation systems, and practical software products.
+
+### Connect With Me
+
+* **GitHub:** [github.com/mohamedsaif21](https://github.com/mohamedsaif21)
+* **LinkedIn:** [linkedin.com/in/mohamed-saif24](https://www.linkedin.com/in/mohamed-saif24/)
+* **Portfolio:** [Visit My Portfolio](YOUR_LIVE_PORTFOLIO_URL)
+* **Email:** [mohamedsaifb24@gmail.com](mailto:mohamedsaifb24@gmail.com)
+
+---
+
+# ⭐ Project Summary
+
+**PrintAI** brings together production scheduling, machine management, SLA monitoring, and AI-assisted optimization into a single platform.
+
+The project demonstrates how AI and modern web technologies can be applied to solve practical production-planning challenges.
+
+```text
+PLAN
+  ↓
+SCHEDULE
+  ↓
+MONITOR
+  ↓
+OPTIMIZE
+  ↓
+RECOVER
+```
+
+> **Smarter Production Planning with AI.**
