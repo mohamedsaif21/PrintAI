@@ -1,7 +1,7 @@
 # PrintAI — AI-Powered Production Planning
 
 <p align="center">
-  <img src="./docs/dashboard.png" alt="PrintAI Production Planning Dashboard" width="100%">
+  <img src="printai attest.png" alt="PrintAI Production Planning Dashboard" width="100%">
 </p>
 
 <p align="center">
@@ -17,12 +17,6 @@
 <a href="YOUR_LIVE_APPLICATION_URL">
   <img src="https://img.shields.io/badge/🌐%20Live%20Application-Open%20PrintAI-blue?style=for-the-badge" alt="Live Application" />
 </a>
-
-<a href="YOUR_GITHUB_REPOSITORY_URL">
-  <img src="https://img.shields.io/badge/💻%20GitHub-Source%20Code-black?style=for-the-badge&logo=github" alt="GitHub Repository" />
-</a>
-
-</p>
 
 ---
 
@@ -633,13 +627,6 @@ The internship certificate is included in this repository as supporting document
 **Frontend Developer | AI & Web Development**
 
 Passionate about building modern web applications, AI-powered solutions, automation systems, and practical software products.
-
-### Connect With Me
-
-* **GitHub:** [github.com/mohamedsaif21](https://github.com/mohamedsaif21)
-* **LinkedIn:** [linkedin.com/in/mohamed-saif24](https://www.linkedin.com/in/mohamed-saif24/)
-* **Portfolio:** [Visit My Portfolio](YOUR_LIVE_PORTFOLIO_URL)
-* **Email:** [mohamedsaifb24@gmail.com](mailto:mohamedsaifb24@gmail.com)
 
 ---
 
